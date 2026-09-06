@@ -511,7 +511,23 @@ end
 
 -------------------------------- term
 
+local term = {}
 
+function term.setCursor(x, y)
+
+end
+
+function term.getCursor()
+  return 0, 0
+end
+
+function term.setCursorBlink(blink)
+
+end
+
+function term.clear()
+
+end
 
 -------------------------------- filesystem
 
@@ -1026,21 +1042,19 @@ local function find()
     setStatus("Find: " .. findText)
 
     local _, address, char, code = term.pull("key_down")
-    if address == term.keyboard() then
-      local handler, name = getKeyBindHandler(code)
-      highlight(cbx, cby, unicode.wlen(findText), false)
-      if name == "newline" then
-        break
-      elseif name == "close" then
-        handler()
-      elseif name == "backspace" then
-        findText = unicode.sub(findText, 1, -2)
-      elseif name == "find" or name == "findnext" then
-        ibx = cbx + 1
-        iby = cby
-      elseif not keyboard.isControl(char) then
-        findText = findText .. unicode.char(char)
-      end
+    local handler, name = getKeyBindHandler(code)
+    highlight(cbx, cby, unicode.wlen(findText), false)
+    if name == "newline" then
+      break
+    elseif name == "close" then
+      handler()
+    elseif name == "backspace" then
+      findText = unicode.sub(findText, 1, -2)
+    elseif name == "find" or name == "findnext" then
+      ibx = cbx + 1
+      iby = cby
+    elseif not keyboard.isControl(char) then
+      findText = findText .. unicode.char(char)
     end
   end
   setCursor(cbx, cby)
@@ -1177,10 +1191,9 @@ getKeyBindHandler = function(code)
             elseif value == "shift" then shift = true
             else key = value end
           end
-          local keyboardAddress = term.keyboard()
-          if (alt     == not not keyboard.isAltDown(keyboardAddress)) and
-             (control == not not keyboard.isControlDown(keyboardAddress)) and
-             (shift   == not not keyboard.isShiftDown(keyboardAddress)) and
+          if (alt     == not not keyboard.isAltDown()) and
+             (control == not not keyboard.isControlDown()) and
+             (shift   == not not keyboard.isShiftDown()) and
              code == keyboard.keys[key] and
              #keybind > resultWeight
           then
