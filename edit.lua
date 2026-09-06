@@ -365,6 +365,7 @@ local args = {...}
 
 local filename = args[1]
 if not filename then
+  io.write("Usage: edit <filename>\n")
   os.exit(1)
 end
 local file_parentpath = fs.path(filename)
