@@ -1006,7 +1006,8 @@ elseif (not fs.exists(filename) and fs.isReadOnly(file_parentpath)) or (fs.exist
 end
 
 os.execute("clear")
-os.execute("stty -echo -icanon min 1 time 0")
+--os.execute("stty -echo -icanon min 1 time 0")
+os.execute("stty -echo -icanon -ixon min 1 time 0")
 term.setCursorBlink(true)
 term.setEchoEnabled(false)
 
