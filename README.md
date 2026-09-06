@@ -5,4 +5,3 @@ config path: ~/.config/edit.cfg
 ## dependencies
 * lua5.3
 * stty
-* tput

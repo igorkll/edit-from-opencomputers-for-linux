@@ -1,4 +1,7 @@
 #!/usr/bin/lua5.3
+
+-- edit-from-opencomputers-for-linux: https://github.com/igorkll/edit-from-opencomputers-for-linux
+
 local home_dir = os.getenv("HOME")
 local config_dir_path = home_dir .. "/.config"
 local config_path = config_dir_path .. "/edit.cfg"
@@ -437,6 +440,46 @@ end
 
 -------------------------------- keyboard
 
+local keyboard = {pressedChars = {}, pressedCodes = {}}
+
+keyboard.keys = {
+  c               = 0x2E,
+  d               = 0x20,
+  q               = 0x10,
+  w               = 0x11,
+  back            = 0x0E, -- backspace
+  delete          = 0xD3,
+  down            = 0xD0,
+  enter           = 0x1C,
+  home            = 0xC7,
+  lcontrol        = 0x1D,
+  left            = 0xCB,
+  lmenu           = 0x38, -- left Alt
+  lshift          = 0x2A,
+  pageDown        = 0xD1,
+  rcontrol        = 0x9D,
+  right           = 0xCD,
+  rmenu           = 0xB8, -- right Alt
+  rshift          = 0x36,
+  space           = 0x39,
+  tab             = 0x0F,
+  up              = 0xC8,
+  ["end"]         = 0xCF,
+  numpadenter     = 0x9C,
+}
+
+function keyboard.isAltDown()
+  return keyboard.pressedCodes[keyboard.keys.lmenu] or keyboard.pressedCodes[keyboard.keys.rmenu]
+end
+
+function keyboard.isControl(char)
+  return type(char) == "number" and (char < 0x20 or (char >= 0x7F and char <= 0x9F))
+end
+
+function keyboard.isControlDown()
+  return keyboard.pressedCodes[keyboard.keys.lcontrol] or keyboard.pressedCodes[keyboard.keys.rcontrol]
+end
+
 -------------------------------- term
 
 local term = {
@@ -502,6 +545,15 @@ end
 
 function term.pull(eventName)
   local eventTbl = rawPull()
+
+  if eventTbl[1] == "key_down" then
+    keyboard.pressedChars[eventTbl[3]] = true
+    keyboard.pressedCodes[eventTbl[4]] = true
+  elseif eventTbl[1] == "key_up" then
+    keyboard.pressedChars[eventTbl[3]] = false
+    keyboard.pressedCodes[eventTbl[4]] = false
+  end
+
   if eventName then
     if eventTbl[1] == eventName then
       return table.unpack(eventTbl)
