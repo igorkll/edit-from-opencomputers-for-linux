@@ -513,6 +513,10 @@ end
 
 local term = {}
 
+function term.getGlobalArea()
+  return 0, 0, 80, 25
+end
+
 function term.setCursor(x, y)
   os.execute("tput cup " .. x .. " " .. y)
 end
