@@ -89,74 +89,28 @@ end
 
 local unicode = {}
 
--- char(...) -> string
 function unicode.char(...)
-    local ok, res = pcall(utf8.char, ...)
-    if ok then
-        return res
-    else
-        return nil, res
-    end
+  local ok, res = pcall(utf8.char, ...)
+  if ok then
+    return res
+  else
+    return nil, res
+  end
 end
 
--- len(s) -> number of codepoints
 function unicode.len(s)
-    local ok, res = pcall(utf8.len, s)
-    if ok then
-        return res
-    else
-        return nil, res
-    end
+  local ok, res = pcall(utf8.len, s)
+  if ok then
+    return res
+  else
+    return nil, res
+  end
 end
 
--- lower(s) -> lowercase string (ASCII only; non‑ASCII unchanged)
-function unicode.lower(s)
-    if type(s) ~= "string" then
-        return nil, "bad argument #1 to 'lower' (string expected)"
-    end
-    local parts = {}
-    for cp in utf8.codes(s) do
-        if cp >= 65 and cp <= 90 then        -- A-Z
-            cp = cp + 32
-        end
-        table.insert(parts, utf8.char(cp))
-    end
-    return table.concat(parts)
-end
-
--- upper(s) -> uppercase string (ASCII only; non‑ASCII unchanged)
 function unicode.upper(s)
-    if type(s) ~= "string" then
-        return nil, "bad argument #1 to 'upper' (string expected)"
-    end
-    local parts = {}
-    for cp in utf8.codes(s) do
-        if cp >= 97 and cp <= 122 then       -- a-z
-            cp = cp - 32
-        end
-        table.insert(parts, utf8.char(cp))
-    end
-    return table.concat(parts)
+  return string.upper(s)
 end
 
--- reverse(s) -> reversed string by codepoint, not by byte
-function unicode.reverse(s)
-    if type(s) ~= "string" then
-        return nil, "bad argument #1 to 'reverse' (string expected)"
-    end
-    local chars = {}
-    for cp in utf8.codes(s) do
-        table.insert(chars, utf8.char(cp))
-    end
-    -- reverse the table
-    local n = #chars
-    for i = 1, n // 2 do
-        chars[i], chars[n - i + 1] = chars[n - i + 1], chars[i]
-    end
-    return table.concat(chars)
-end
-
--- sub(s, i, j) -> substring from codepoint index i to j (like string.sub)
 function unicode.sub(s, i, j)
     if type(s) ~= "string" then
         return nil, "bad argument #1 to 'sub' (string expected)"
@@ -468,25 +422,6 @@ keyboard.keys = {
   numpadenter     = 0x9C,
 }
 
-for k, v in pairs({
-  a=65, b=66, c=67, d=68, e=69, f=70, g=71, h=72, i=73, j=74,
-  k=75, l=76, m=77, n=78, o=79, p=80, q=81, r=82, s=83, t=84,
-  u=85, v=86, w=87, x=88, y=89, z=90,
-  ['0']=48, ['1']=49, ['2']=50, ['3']=51, ['4']=52,
-  ['5']=53, ['6']=54, ['7']=55, ['8']=56, ['9']=57,
-  back=0x100, tab=9, enter=13, escape=27, space=32,
-  pageUp=0x106, pageDown=0x107, ['end']=0x108, home=0x109,
-  left=0x10A, up=0x10B, right=0x10C, down=0x10D,
-  insert=0x10E, delete=0x10F,
-  f1=0x110, f2=0x111, f3=0x112, f4=0x113, f5=0x114,
-  f6=0x115, f7=0x116, f8=0x117, f9=0x118, f10=0x119,
-  f11=0x11A, f12=0x11B
-}) do
-  if not keyboard.keys[k] then
-    keyboard.keys[k] = v
-  end
-end
-
 function keyboard.isAltDown()
   return keyboard.pressedCodes[keyboard.keys.lmenu] or keyboard.pressedCodes[keyboard.keys.rmenu]
 end
@@ -564,7 +499,6 @@ local function read_byte()
   return io.stdin:read(1)
 end
 
--- Чтение UTF-8 символа (до 4 байт)
 local function read_utf8_char()
   local first = read_byte()
   if not first then return nil end
@@ -590,143 +524,25 @@ local function read_utf8_char()
   return table.concat(chars)
 end
 
--- Распознавание escape-последовательностей
-local function recognize_escape(seq)
-  -- Сопоставление последовательностей с кодами клавиш
-  local map = {
-      ["\x1b[A"] = keyboard.keys.up,
-      ["\x1b[B"] = keyboard.keys.down,
-      ["\x1b[C"] = keyboard.keys.right,
-      ["\x1b[D"] = keyboard.keys.left,
-      ["\x1b[H"] = keyboard.keys.home,
-      ["\x1b[F"] = keyboard.keys["end"],
-      ["\x1b[5~"] = keyboard.keys.pageUp,
-      ["\x1b[6~"] = keyboard.keys.pageDown,
-      ["\x1b[2~"] = keyboard.keys.insert,
-      ["\x1b[3~"] = keyboard.keys.delete,
-      ["\x1b[1~"] = keyboard.keys.home,
-      ["\x1b[4~"] = keyboard.keys["end"],
-      ["\x1bOP"] = keyboard.keys.f1,
-      ["\x1bOQ"] = keyboard.keys.f2,
-      ["\x1bOR"] = keyboard.keys.f3,
-      ["\x1bOS"] = keyboard.keys.f4,
-      ["\x1b[15~"] = keyboard.keys.f5,
-      ["\x1b[17~"] = keyboard.keys.f6,
-      ["\x1b[18~"] = keyboard.keys.f7,
-      ["\x1b[19~"] = keyboard.keys.f8,
-      ["\x1b[20~"] = keyboard.keys.f9,
-      ["\x1b[21~"] = keyboard.keys.f10,
-      ["\x1b[23~"] = keyboard.keys.f11,
-      ["\x1b[24~"] = keyboard.keys.f12,
-  }
-  -- Проверка точного совпадения
-  if map[seq] then
-      return map[seq], nil -- nil = без модификаторов
-  end
-
-  -- Попытка распарсить последовательность с модификатором: \x1b[1;5A
-  local code, mod = seq:match("^\x1b%[(%d+);(%d+)(.)$")
-  if code and mod then
-      local key = map["\x1b[" .. code:sub(1,1) .. "?"]
-      -- Извлекаем базовую клавишу по конечной букве
-      local base = seq:sub(-1)
-      local base_key
-      if base == "A" then base_key = keyboard.keys.up
-      elseif base == "B" then base_key = keyboard.keys.down
-      elseif base == "C" then base_key = keyboard.keys.right
-      elseif base == "D" then base_key = keyboard.keys.left
-      elseif base == "H" then base_key = keyboard.keys.home
-      elseif base == "F" then base_key = keyboard.keys["end"]
-      else
-          return nil
-      end
-      -- Определяем модификаторы по номеру
-      local alt, ctrl, shift = false, false, false
-      local m = tonumber(mod)
-      if m == 2 then shift = true
-      elseif m == 3 then alt = true
-      elseif m == 4 then shift, alt = true, true
-      elseif m == 5 then ctrl = true
-      elseif m == 6 then ctrl, shift = true, true
-      elseif m == 7 then ctrl, alt = true, true
-      elseif m == 8 then ctrl, shift, alt = true, true, true
-      end
-      --keyboard.updateModifiers(alt, ctrl, shift)
-      return base_key
-  end
-
-  -- Неизвестная последовательность
-  return nil
-end
-
--- Чтение одного события из терминала
-local function rawPull()
+local function rawKeyboardPull()
   local char = read_utf8_char()
   if not char then
-      return
-  end
-  local code = string.byte(char)
-
-  -- Обработка Escape (начало escape-последовательности)
-  if code == 27 then
-      local seq = char
-      local next_byte = read_byte()
-      if next_byte then
-          seq = seq .. next_byte
-          -- Может быть несколько байтов в последовательности, читаем пока не получим полную
-          -- Упрощённо: читаем до тех пор, пока не встретим букву или '~'
-          while true do
-              local b = read_byte()
-              if not b then break end
-              seq = seq .. b
-              local last = b:byte()
-              if (last >= 0x40 and last <= 0x7E) or last == 0x7E then
-                  break
-              end
-          end
-      end
-      local key_code = recognize_escape(seq)
-      if key_code then
-          return {"key_down", "keyboard", 0, key_code}
-      else
-          -- Если не распознали, возвращаем как обычный escape
-          return {"key_down", "keyboard", 27, 27}
-      end
+    return
   end
 
-  -- Обработка управляющих символов
-  if code < 32 or code == 127 then
-      local key_code = code
-      if code >= 1 and code <= 26 then
-          -- Ctrl+буква: код клавиши = код буквы (A=65..Z=90)
-          key_code = code + 64
-          keyboard.updateModifiers(false, true, false) -- Ctrl зажат
-      elseif code == 9 then -- Tab
-          key_code = keyboard.keys.tab
-      elseif code == 10 or code == 13 then -- Enter (может быть 10 или 13)
-          key_code = keyboard.keys.enter
-          if code == 10 then char = "\r" end -- нормализуем в 13?
-      elseif code == 127 then -- Backspace
-          key_code = keyboard.keys.back
-          char = "\x08"
-      end
-      return {"key_down", "keyboard", string.byte(char) or 0, key_code}
+  local charbyte = string.byte(char)
+
+  if charbyte == 10 then
+    return {"key_down", "keyboard", 13, 28}
+  elseif charbyte == 127 then
+    return {"key_down", "keyboard", 8, 14}
   end
 
-  -- Обычный печатный символ (включая UTF-8)
-  -- Для одиночных байтов ASCII code = код, для UTF-8 code = код первого байта? но лучше code = 0? В OpenComputers для печатных символов code = код ASCII, а char = строка.
-  -- Мы можем использовать code = string.byte(char) для ASCII, но для UTF-8 это не подойдёт. В OpenComputers для не-ASCII символов code = 0? Проверим: обычно они используют code как идентификатор клавиши, а для печатных символов это ASCII код. Для UTF-8 многобайтовых, вероятно, code = 0.
-  -- Чтобы не усложнять, для многобайтовых вернём code = 0.
-  if #char == 1 and code >= 32 and code <= 126 then
-      return {"key_down", "keyboard", char, code}
-  else
-      -- Многобайтовый UTF-8
-      return {"key_down", "keyboard", char, 0}
-  end
+  return {"key_down", "keyboard", charbyte, 0}
 end
 
 function term.pull(eventName)
-  local eventTbl = rawPull() or {}
+  local eventTbl = rawKeyboardPull() or {}
 
   if eventTbl[1] == "key_down" then
     keyboard.pressedChars[eventTbl[3]] = true
