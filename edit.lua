@@ -438,18 +438,23 @@ end
 
 -------------------------------- term
 
-local term = {}
+local term = {
+  cursorX = 0
+  cursorY = 0
+}
 
 function term.getGlobalArea()
   return 0, 0, 80, 25
 end
 
 function term.setCursor(x, y)
+  term.cursorX = x
+  term.cursorY = y
   os.execute("tput cup " .. x .. " " .. y)
 end
 
 function term.getCursor()
-  return 0, 0
+  return term.cursorX, term.cursorY
 end
 
 function term.setCursorBlink(blink)
@@ -549,12 +554,9 @@ end
 
 -------------------------------- gpu
 
--------------------------------- edit
 
---local keyboard = localRequire("keyboard")
---local shell = localRequire("shell")
---local term = localRequire("term") -- TODO use tty and cursor position instead of global area and gpu
---local text = localRequire("text")
+
+-------------------------------- edit
 
 local args = {...}
 
