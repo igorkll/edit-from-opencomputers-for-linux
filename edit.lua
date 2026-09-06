@@ -198,7 +198,7 @@ function unicode.isWide(s)
     if not ok then
         return nil, err
     end
-    cp = ok
+    cp = err
     -- ensure exactly one codepoint
     local _, count = string.gsub(s, "[\x80-\xBF]", "") -- count continuation bytes
     if utf8.len(s) ~= 1 then
