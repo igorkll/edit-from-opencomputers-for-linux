@@ -471,7 +471,9 @@ function term.getCursor()
   return term.cursorX, term.cursorY
 end
 
+local cursorBlinking = false
 function term.setCursorBlink(blink)
+  cursorBlinking = blink
   if blink then
       io.write("\x1b[?25h") -- show cursor
       -- попробуем включить мигание (некоторые терминалы)
@@ -605,7 +607,8 @@ local state = {
   height = 25,
   bg     = 0x000000,
   fg     = 0xFFFFFF,
-  buffer = {}
+  buffer = {},
+  buffer2 = {}
 }
 
 function gpu.getResolution()
@@ -707,19 +710,43 @@ local function ansi_clear()
   return "\x1b[2J\x1b[H"
 end
 
-function gpu.update()
-  for ix = 1, state.width do
-    for iy = 1, state.height do
-      local charinfo = state.buffer[(ix - 1) + ((iy - 1) * state.width)]
+local function bufcmp(v1, v2)
+  if not v2 then return true end
+  return v1[1] ~= v2[1] or v1[2] ~= v2[2] or v1[3] ~= v2[3]
+end
 
-      io.write(ansi_goto(ix, iy))
-      io.write(ansi_bg(charinfo[1]))
-      io.write(ansi_fg(charinfo[2]))
-      io.write(charinfo[3])
+function gpu.update()
+  local changed = false
+  for iy = 1, state.height do
+    for ix = 1, state.width do
+      local bufidx = (ix - 1) + ((iy - 1) * state.width)
+      if bufcmp(state.buffer[bufidx], state.buffer2[bufidx]) then
+        changed = true
+        break
+      end
+    end
+    if changed then break end
+  end
+  if not changed then return end
+
+  term.setCursorBlink(false)
+  for iy = 1, state.height do
+    for ix = 1, state.width do
+      local bufidx = (ix - 1) + ((iy - 1) * state.width)
+      if bufcmp(state.buffer[bufidx], state.buffer2[bufidx]) then
+        local charinfo = state.buffer[bufidx]
+
+        io.write(ansi_goto(ix, iy))
+        io.write(ansi_bg(charinfo[1]))
+        io.write(ansi_fg(charinfo[2]))
+        io.write(charinfo[3])
+
+        state.buffer2[bufidx] = state.buffer[bufidx]
+      end
     end
   end
-
   term.setCursor(term.getCursor())
+  term.setCursorBlink(true)
 end
 
 -------------------------------- edit
@@ -750,6 +777,7 @@ elseif (not fs.exists(filename) and fs.isReadOnly(file_parentpath)) or (fs.exist
   os.exit(1)
 end
 
+os.execute("clear")
 term.setCursorBlink(true)
 term.setEchoEnabled(false)
 
