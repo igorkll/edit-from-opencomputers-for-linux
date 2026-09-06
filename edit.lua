@@ -1,6 +1,7 @@
+#!/usr/bin/lua5.3
 local home_dir = os.getenv("HOME")
 local config_dir_path = home_dir .. "/.config"
-local config_path = config_dir .. "/edit.cfg"
+local config_path = config_dir_path .. "/edit.cfg"
 
 
 -------------------------------- edit
