@@ -677,7 +677,7 @@ local function rawKeyboardPull()
   if charbyte >= 1 and charbyte <= 26 then
     local key_code = charbyte + 64
     keyboard.pressedCodes[keyboard.keys.lcontrol] = true
-    return {"key_down", "keyboard", charbyte, 0}
+    return {"key_down", "keyboard", key_code, 0}
   end
 
   if charbyte == 27 then
@@ -716,10 +716,6 @@ local function rawKeyboardPull()
         return {"key_down", "keyboard", 0, keyboard.keys.home}
       elseif seq:byte(3) == 50 then
         return {"key_down", "keyboard", 0, keyboard.keys.insert}
-      else
-        --os.execute("reset")
-        --print(seq:byte(3))
-        --os.exit(1)
       end
     end
   end
