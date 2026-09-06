@@ -514,7 +514,7 @@ end
 local term = {}
 
 function term.setCursor(x, y)
-
+  
 end
 
 function term.getCursor()
@@ -526,7 +526,7 @@ function term.setCursorBlink(blink)
 end
 
 function term.clear()
-
+  os.execute("clear")
 end
 
 -------------------------------- filesystem
