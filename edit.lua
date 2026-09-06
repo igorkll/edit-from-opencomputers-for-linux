@@ -472,6 +472,14 @@ function term.setCursorBlink(blink)
 
 end
 
+function term.setEchoEnabled(echo)
+  if echo then
+    os.execute("stty echo")
+  else
+    os.execute("stty -echo")
+  end
+end
+
 function term.clear()
   os.execute("clear")
 end
@@ -872,6 +880,7 @@ end
 
 term.clear()
 term.setCursorBlink(true)
+term.setEchoEnabled(false)
 
 local running = true
 local buffer = {}
@@ -1505,3 +1514,4 @@ end
 
 term.clear()
 term.setCursorBlink(true)
+term.setEchoEnabled(true)
