@@ -280,6 +280,10 @@ end
 
 -------------------------------- keyboard
 
+-------------------------------- term
+
+
+
 -------------------------------- filesystem
 
 local filesystem = {}
@@ -408,62 +412,6 @@ function filesystem.realPath(path)
   return table.concat(parts, "/")
 end
 
-function filesystem.mount(fs, path)
-  checkArg(1, fs, "string", "table")
-  if type(fs) == "string" then
-    fs = filesystem.proxy(fs)
-  end
-  assert(type(fs) == "table", "bad argument #1 (file system proxy or address expected)")
-  checkArg(2, path, "string")
-
-  local real
-  if not mtab.fs then
-    if path == "/" then
-      real = path
-    else
-      return nil, "rootfs must be mounted first"
-    end
-  else
-    local why
-    real, why = filesystem.realPath(path)
-    if not real then
-      return nil, why
-    end
-
-    if filesystem.exists(real) and not filesystem.isDirectory(real) then
-      return nil, "mount point is not a directory"
-    end
-  end
-
-  local fsnode
-  if fstab[real] then
-    return nil, "another filesystem is already mounted here"
-  end
-  for _,node in pairs(fstab) do
-    if node.fs.address == fs.address then
-      fsnode = node
-      break
-    end
-  end
-
-  if not fsnode then
-    fsnode = select(3, findNode(real, true))
-    -- allow filesystems to intercept their own nodes
-    fs.fsnode = fsnode
-  else
-    local pwd = filesystem.path(real)
-    local parent = select(3, findNode(pwd, true))
-    local name = filesystem.name(real)
-    fsnode = setmetatable({name=name,parent=parent},{__index=fsnode})
-    parent.children[name] = fsnode
-  end
-
-  fsnode.fs = fs
-  fstab[real] = fsnode
-
-  return true
-end
-
 function filesystem.path(path)
   local parts = segments(path)
   local result = table.concat(parts, "/", 1, #parts - 1) .. "/"
@@ -544,116 +492,11 @@ function filesystem.list(path)
   end
 end
 
-function filesystem.open(path, mode)
-  checkArg(1, path, "string")
-  mode = tostring(mode or "r")
-  checkArg(2, mode, "string")
-
-  assert(({r=true, rb=true, w=true, wb=true, a=true, ab=true})[mode],
-    "bad argument #2 (r[b], w[b] or a[b] expected, got " .. mode .. ")")
-
-  local node, rest = findNode(path, false, true)
-  if not node then
-    return nil, rest
-  end
-  if not node.fs or not rest or (({r=true,rb=true})[mode] and not node.fs.exists(rest)) then
-    return nil, "file not found"
-  end
-
-  local handle, reason = node.fs.open(rest, mode)
-  if not handle then
-    return nil, reason
-  end
-
-  return setmetatable({
-    fs = node.fs,
-    handle = handle,
-  }, {__index = function(tbl, key)
-    if not tbl.fs[key] then return end
-    if not tbl.handle then
-      return nil, "file is closed"
-    end
-    return function(self, ...)
-      local h = self.handle
-      if key == "close" then
-        self.handle = nil
-      end
-      return self.fs[key](h, ...)
-    end
-  end})
-end
-
 filesystem.findNode = findNode
 filesystem.segments = segments
 filesystem.fstab = fstab
 
--------------------------------- shell
-
-local shell = {}
-
-function shell.resolve(path, ext)
-  checkArg(1, path, "string")
-
-  local dir = path
-  if dir:find("/") ~= 1 then
-    dir = fs.concat(shell.getWorkingDirectory(), dir)
-  end
-  local name = fs.name(path)
-  dir = fs[name and "path" or "canonical"](dir)
-  local fullname = fs.concat(dir, name or "")
-
-  if not ext then
-    return fullname
-  elseif name then
-    checkArg(2, ext, "string")
-    -- search for name in PATH if no dir was given
-    -- no dir was given if path has no /
-    local search_in = path:find("/") and dir or os.getenv("PATH")
-    for search_path in string.gmatch(search_in, "[^:]+") do
-      -- resolve search_path because they may be relative
-      local search_name = fs.concat(shell.resolve(search_path), name)
-      if not fs.exists(search_name) then
-        search_name = search_name .. "." .. ext
-      end
-      -- extensions are provided when the caller is looking for a file
-      if fs.exists(search_name) and not fs.isDirectory(search_name) then
-        return search_name
-      end
-    end
-  end
-
-  return nil, "file not found"
-end
-
-function shell.parse(...)
-  local params = table.pack(...)
-  local args = {}
-  local options = {}
-  local doneWithOptions = false
-  for i = 1, params.n do
-    local param = params[i]
-    if not doneWithOptions and type(param) == "string" then
-      if param == "--" then
-        doneWithOptions = true -- stop processing options at `--`
-      elseif param:sub(1, 2) == "--" then
-        local key, value = param:match("%-%-(.-)=(.*)")
-        if not key then
-          key, value = param:sub(3), true
-        end
-        options[key] = value
-      elseif param:sub(1, 1) == "-" and param ~= "-" then
-        for j = 2, unicode.len(param) do
-          options[unicode.sub(param, j, j)] = true
-        end
-      else
-        table.insert(args, param)
-      end
-    else
-      table.insert(args, param)
-    end
-  end
-  return args, options
-end
+-------------------------------- gpu
 
 -------------------------------- edit
 
@@ -662,17 +505,9 @@ end
 --local term = localRequire("term") -- TODO use tty and cursor position instead of global area and gpu
 --local text = localRequire("text")
 
-if not term.isAvailable() then
-  return
-end
-local gpu = term.gpu()
-local args, options = shell.parse(...)
-if #args == 0 then
-  io.write("Usage: edit <filename>")
-  return
-end
+local args = ...
 
-local filename = shell.resolve(args[1])
+local filename = args[1]
 local file_parentpath = fs.path(filename)
 
 if fs.exists(file_parentpath) and not fs.isDirectory(file_parentpath) then
@@ -1348,27 +1183,25 @@ end
 
 while running do
   local event, address, arg1, arg2, arg3 = term.pull()
-  if address == term.keyboard() or address == term.screen() then
-    local blink = true
-    if event == "key_down" then
-      onKeyDown(arg1, arg2)
-    elseif event == "clipboard" and not readonly then
-      onClipboard(arg1)
-    elseif event == "touch" or event == "drag" then
-      local x, y, w, h = getArea()
-      arg1 = arg1 - x + 1
-      arg2 = arg2 - y + 1
-      if arg1 >= 1 and arg2 >= 1 and arg1 <= w and arg2 <= h then
-        onClick(arg1, arg2)
-      end
-    elseif event == "scroll" then
-      onScroll(arg3)
-    else
-      blink = false
+  local blink = true
+  if event == "key_down" then
+    onKeyDown(arg1, arg2)
+  elseif event == "clipboard" and not readonly then
+    onClipboard(arg1)
+  elseif event == "touch" or event == "drag" then
+    local x, y, w, h = getArea()
+    arg1 = arg1 - x + 1
+    arg2 = arg2 - y + 1
+    if arg1 >= 1 and arg2 >= 1 and arg1 <= w and arg2 <= h then
+      onClick(arg1, arg2)
     end
-    if blink then
-      term.setCursorBlink(true)
-    end
+  elseif event == "scroll" then
+    onScroll(arg3)
+  else
+    blink = false
+  end
+  if blink then
+    term.setCursorBlink(true)
   end
 end
 
