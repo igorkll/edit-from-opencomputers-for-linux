@@ -1488,30 +1488,36 @@ do
   setCursor(1, 1)
 end
 
-while running do
-  local event, address, arg1, arg2, arg3 = term.pull()
-  local blink = true
-  if event == "key_down" then
-    onKeyDown(arg1, arg2)
-  elseif event == "clipboard" and not readonly then
-    onClipboard(arg1)
-  elseif event == "touch" or event == "drag" then
-    local x, y, w, h = getArea()
-    arg1 = arg1 - x + 1
-    arg2 = arg2 - y + 1
-    if arg1 >= 1 and arg2 >= 1 and arg1 <= w and arg2 <= h then
-      onClick(arg1, arg2)
+local ok, err = xpcall(function()
+  while running do
+    local event, address, arg1, arg2, arg3 = term.pull()
+    local blink = true
+    if event == "key_down" then
+      onKeyDown(arg1, arg2)
+    elseif event == "clipboard" and not readonly then
+      onClipboard(arg1)
+    elseif event == "touch" or event == "drag" then
+      local x, y, w, h = getArea()
+      arg1 = arg1 - x + 1
+      arg2 = arg2 - y + 1
+      if arg1 >= 1 and arg2 >= 1 and arg1 <= w and arg2 <= h then
+        onClick(arg1, arg2)
+      end
+    elseif event == "scroll" then
+      onScroll(arg3)
+    else
+      blink = false
     end
-  elseif event == "scroll" then
-    onScroll(arg3)
-  else
-    blink = false
+    if blink then
+      term.setCursorBlink(true)
+    end
   end
-  if blink then
-    term.setCursorBlink(true)
-  end
-end
+end, debug.traceback)
 
 term.clear()
 term.setCursorBlink(true)
 term.setEchoEnabled(true)
+
+if not ok then
+  io.stderr:write("unhandled exception: " .. tostring(err or "unknown") .. "\n")
+end
