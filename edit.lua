@@ -666,6 +666,11 @@ local function read_utf8_char()
   return table.concat(chars)
 end
 
+local function getCodeFromChar(char)
+  char = string.lower(string.char(char))
+  return keyboard.keys[char] or 0
+end
+
 local function rawKeyboardPull()
   local char = read_utf8_char()
   if not char then
@@ -677,7 +682,7 @@ local function rawKeyboardPull()
   if charbyte >= 1 and charbyte <= 26 then
     local key_code = charbyte + 64
     keyboard.pressedCodes[keyboard.keys.lcontrol] = true
-    return {"key_down", "keyboard", key_code, 0}
+    return {"key_down", "keyboard", key_code, getCodeFromChar(key_code)}
   end
 
   if charbyte == 27 then
@@ -726,7 +731,7 @@ local function rawKeyboardPull()
     return {"key_down", "keyboard", 8, 14}
   end
 
-  return {"key_down", "keyboard", charbyte, 0}
+  return {"key_down", "keyboard", charbyte, getCodeFromChar(charbyte)}
 end
 
 function term.pull(eventName)
