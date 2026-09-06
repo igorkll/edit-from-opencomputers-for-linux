@@ -361,24 +361,27 @@ end
 --local term = localRequire("term") -- TODO use tty and cursor position instead of global area and gpu
 --local text = localRequire("text")
 
-local args = ...
+local args = {...}
 
 local filename = args[1]
+if not filename then
+  os.exit(1)
+end
 local file_parentpath = fs.path(filename)
 
 if fs.exists(file_parentpath) and not fs.isDirectory(file_parentpath) then
   io.stderr:write(string.format("Not a directory: %s\n", file_parentpath))
-  return 1
+  os.exit(1)
 end
 
 local readonly = isReadOnly(filename)
 
 if fs.isDirectory(filename) then
   io.stderr:write("file is a directory\n")
-  return 1
+  os.exit(1)
 elseif not fs.exists(filename) and readonly then
   io.stderr:write("file system is read only\n")
-  return 1
+  os.exit(1)
 end
 
 local function loadConfig()
