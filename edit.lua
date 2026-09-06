@@ -23,91 +23,57 @@ end
 
 -------------------------------- unicode
 
--- unicode.lua
--- Полноценная реализация OpenComputers Unicode API для Lua 5.3+
--- Основана на встроенной библиотеке utf8 и актуальных данных о ширине символов.
+-- Pure Lua implementation of the OpenComputers unicode library.
+-- Requires Lua 5.3+ with the built-in utf8 library.
+-- All functions return (result) on success, or (nil, error_message) on failure,
+-- emulating the behaviour of the original spcall-wrapped version.
 
 local utf8 = require("utf8")
-local unicode = {}
 
 -- ----------------------------------------------------------------------
--- Таблица широких символов (East Asian Width = W или F, плюс специальные)
--- Взята из стандарта Unicode 15.0, дополнена всеми известными диапазонами.
+-- Wide character ranges (East Asian Width = W or F, plus common CJK blocks)
+-- This table is used by isWide() and charWidth().
 -- ----------------------------------------------------------------------
 local wide_ranges = {
-    -- Hangul Jamo
-    {0x1100, 0x115F},
-    -- Hangul Jamo Extended-A
-    {0xA960, 0xA97F},
-    -- Hangul Jamo Extended-B
-    {0xD7B0, 0xD7FF},
-    -- CJK Radicals Supplement, Kangxi Radicals, Ideographic Description
-    {0x2E80, 0x2EFF},
-    {0x2F00, 0x2FDF},
-    {0x2FF0, 0x2FFF},
-    -- CJK Symbols and Punctuation, Hiragana, Katakana, Bopomofo
-    {0x3000, 0x303F},
-    {0x3040, 0x309F},
-    {0x30A0, 0x30FF},
-    {0x3100, 0x312F},
-    {0x31A0, 0x31BF},
-    -- Enclosed CJK, CJK Compatibility, etc.
-    {0x3200, 0x32FF},
-    {0x3300, 0x33FF},
-    -- CJK Unified Ideographs Extension A & B, plus main block
-    {0x3400, 0x4DBF},
-    {0x4E00, 0x9FFF},
-    {0x20000, 0x2A6DF},
-    -- Extensions C–G
-    {0x2A700, 0x2B73F},
-    {0x2B740, 0x2B81F},
-    {0x2B820, 0x2CEAF},
-    {0x2CEB0, 0x2EBEF},
-    {0x30000, 0x3134F},
-    -- Hangul Syllables
-    {0xAC00, 0xD7AF},
-    -- Yi Syllables, Yi Radicals
-    {0xA000, 0xA4CF},
-    {0xA490, 0xA4CF},
-    -- CJK Compatibility Ideographs
-    {0xF900, 0xFAFF},
-    -- Vertical Forms, CJK Compatibility Forms, Halfwidth/Fullwidth (fullwidth part)
-    {0xFE10, 0xFE1F},
-    {0xFE30, 0xFE4F},
-    {0xFF00, 0xFFEF},
-    -- Kana Supplement, Kana Extended
-    {0x1B000, 0x1B0FF},
-    {0x1B100, 0x1B12F},
-    -- Enclosed Ideographic Supplement
-    {0x1F200, 0x1F2FF},
-    -- CJK Compatibility Ideographs Supplement
-    {0x2F800, 0x2FA1F},
-    -- Emoji that are wide (most flags, some symbols)
-    -- Но их тысячи, пропускаем для простоты – у эмодзи разная ширина,
-    -- но в OpenComputers они считаются шириной 2 (как в большинстве терминалов).
-    -- Добавим самые частые:
-    {0x1F300, 0x1F5FF},  -- Misc symbols and pictographs
-    {0x1F600, 0x1F64F},  -- Emoticons
-    {0x1F680, 0x1F6FF},  -- Transport
-    {0x1F700, 0x1F77F},  -- Alchemical
-    {0x1F780, 0x1F7FF},  -- Geometric
-    {0x1F800, 0x1F8FF},  -- Supplemental arrows
-    {0x1F900, 0x1F9FF},  -- Supplemental symbols
-    {0x1FA00, 0x1FA6F},  -- Chess symbols
-    {0x1FA70, 0x1FAFF},  -- Symbols and pictographs extended
+    {0x1100, 0x115F},   -- Hangul Jamo
+    {0x2329, 0x232A},   -- Angle brackets
+    {0x2E80, 0x2EFF},   -- CJK Radicals Supplement
+    {0x2F00, 0x2FDF},   -- Kangxi Radicals
+    {0x2FF0, 0x2FFF},   -- Ideographic Description Characters
+    {0x3000, 0x303F},   -- CJK Symbols and Punctuation
+    {0x3040, 0x309F},   -- Hiragana
+    {0x30A0, 0x30FF},   -- Katakana
+    {0x3100, 0x312F},   -- Bopomofo
+    {0x3130, 0x318F},   -- Hangul Compatibility Jamo
+    {0x3190, 0x319F},   -- Kanbun
+    {0x31A0, 0x31BF},   -- Bopomofo Extended
+    {0x31C0, 0x31EF},   -- CJK Strokes
+    {0x31F0, 0x31FF},   -- Katakana Phonetic Extensions
+    {0x3200, 0x32FF},   -- Enclosed CJK Letters and Months
+    {0x3300, 0x33FF},   -- CJK Compatibility
+    {0x3400, 0x4DBF},   -- CJK Unified Ideographs Extension A
+    {0x4E00, 0x9FFF},   -- CJK Unified Ideographs
+    {0xA000, 0xA4CF},   -- Yi Syllables
+    {0xAC00, 0xD7AF},   -- Hangul Syllables
+    {0xF900, 0xFAFF},   -- CJK Compatibility Ideographs
+    {0xFE10, 0xFE1F},   -- Vertical Forms
+    {0xFE30, 0xFE4F},   -- CJK Compatibility Forms
+    {0xFF00, 0xFFEF},   -- Halfwidth and Fullwidth Forms (Fullwidth part)
+    {0x1B000, 0x1B0FF}, -- Kana Supplement
+    {0x1B100, 0x1B12F}, -- Kana Extended-A
+    {0x1F200, 0x1F2FF}, -- Enclosed Ideographic Supplement
+    {0x20000, 0x2A6DF}, -- CJK Unified Ideographs Extension B
+    {0x2A700, 0x2B73F}, -- Extension C
+    {0x2B740, 0x2B81F}, -- Extension D
+    {0x2B820, 0x2CEAF}, -- Extension E
+    {0x2CEB0, 0x2EBEF}, -- Extension F
+    {0x2F800, 0x2FA1F}, -- CJK Compatibility Ideographs Supplement
 }
 
--- Быстрая проверка – бинарный поиск по диапазонам
-local function is_wide_cp(cp)
-    local lo, hi = 1, #wide_ranges
-    while lo <= hi do
-        local mid = math.floor((lo + hi) / 2)
-        local range = wide_ranges[mid]
-        if cp < range[1] then
-            hi = mid - 1
-        elseif cp > range[2] then
-            lo = mid + 1
-        else
+-- Helper: check if a codepoint is wide
+local function is_codepoint_wide(cp)
+    for _, range in ipairs(wide_ranges) do
+        if cp >= range[1] and cp <= range[2] then
             return true
         end
     end
@@ -115,33 +81,39 @@ local function is_wide_cp(cp)
 end
 
 -- ----------------------------------------------------------------------
--- Публичное API
+-- Public functions
 -- ----------------------------------------------------------------------
 
---- unicode.char(...) -> string или nil, ошибка
+local unicode = {}
+
+-- char(...) -> string
 function unicode.char(...)
     local ok, res = pcall(utf8.char, ...)
-    if ok then return res end
-    return nil, res
+    if ok then
+        return res
+    else
+        return nil, res
+    end
 end
 
---- unicode.len(s) -> количество кодовых точек
+-- len(s) -> number of codepoints
 function unicode.len(s)
-    if type(s) ~= "string" then return nil, "string expected" end
     local ok, res = pcall(utf8.len, s)
-    if ok then return res end
-    return nil, res
+    if ok then
+        return res
+    else
+        return nil, res
+    end
 end
 
---- unicode.lower(s) -> строка в нижнем регистре (ASCII + базовые кириллические?)
+-- lower(s) -> lowercase string (ASCII only; non‑ASCII unchanged)
 function unicode.lower(s)
-    if type(s) ~= "string" then return nil, "string expected" end
+    if type(s) ~= "string" then
+        return nil, "bad argument #1 to 'lower' (string expected)"
+    end
     local parts = {}
     for cp in utf8.codes(s) do
-        -- Преобразуем только латиницу A-Z (65-90) и кириллицу А-Я (1040-1071) для полноты
-        if cp >= 65 and cp <= 90 then
-            cp = cp + 32
-        elseif cp >= 1040 and cp <= 1071 then
+        if cp >= 65 and cp <= 90 then        -- A-Z
             cp = cp + 32
         end
         table.insert(parts, utf8.char(cp))
@@ -149,14 +121,14 @@ function unicode.lower(s)
     return table.concat(parts)
 end
 
---- unicode.upper(s) -> строка в верхнем регистре (аналогично)
+-- upper(s) -> uppercase string (ASCII only; non‑ASCII unchanged)
 function unicode.upper(s)
-    if type(s) ~= "string" then return nil, "string expected" end
+    if type(s) ~= "string" then
+        return nil, "bad argument #1 to 'upper' (string expected)"
+    end
     local parts = {}
     for cp in utf8.codes(s) do
-        if cp >= 97 and cp <= 122 then
-            cp = cp - 32
-        elseif cp >= 1072 and cp <= 1103 then
+        if cp >= 97 and cp <= 122 then       -- a-z
             cp = cp - 32
         end
         table.insert(parts, utf8.char(cp))
@@ -164,88 +136,121 @@ function unicode.upper(s)
     return table.concat(parts)
 end
 
---- unicode.reverse(s) -> реверс по кодовым точкам
+-- reverse(s) -> reversed string by codepoint, not by byte
 function unicode.reverse(s)
-    if type(s) ~= "string" then return nil, "string expected" end
+    if type(s) ~= "string" then
+        return nil, "bad argument #1 to 'reverse' (string expected)"
+    end
     local chars = {}
     for cp in utf8.codes(s) do
         table.insert(chars, utf8.char(cp))
     end
+    -- reverse the table
     local n = #chars
-    for i = 1, math.floor(n / 2) do
+    for i = 1, n // 2 do
         chars[i], chars[n - i + 1] = chars[n - i + 1], chars[i]
     end
     return table.concat(chars)
 end
 
---- unicode.sub(s, i, j) -> подстрока по индексам кодовых точек
+-- sub(s, i, j) -> substring from codepoint index i to j (like string.sub)
 function unicode.sub(s, i, j)
-    if type(s) ~= "string" then return nil, "string expected" end
+    if type(s) ~= "string" then
+        return nil, "bad argument #1 to 'sub' (string expected)"
+    end
     local n = utf8.len(s)
-    if not n then return nil, "invalid UTF-8" end
-    i = i or 1
-    j = j or -1
-    -- нормализация индексов как в string.sub
+    if n == nil then
+        return nil, "invalid UTF-8 string"
+    end
+    if i == nil then i = 1 end
+    if j == nil then j = -1 end
+
+    -- normalise indices (same logic as string.sub)
     if i < 0 then i = n + i + 1 end
     if j < 0 then j = n + j + 1 end
     if i < 1 then i = 1 end
     if j > n then j = n end
-    if i > n or j < 1 or i > j then return "" end
 
-    local start = utf8.offset(s, i)
-    if not start then return nil, "invalid UTF-8" end
-    local finish
-    if j < n then
-        finish = utf8.offset(s, j + 1) - 1
-    else
-        finish = #s
+    if i > n or j < 1 or i > j then
+        return ""
     end
-    return string.sub(s, start, finish)
+
+    local start_byte = utf8.offset(s, i)
+    if not start_byte then
+        return nil, "invalid UTF-8 string"
+    end
+    local end_byte
+    if j < n then
+        end_byte = utf8.offset(s, j + 1) - 1
+    else
+        end_byte = #s
+    end
+    return string.sub(s, start_byte, end_byte)
 end
 
---- unicode.isWide(s) -> true, если первый символ широкий (ширина > 1)
+-- isWide(s) -> true if the first (and only) character in s is wide
 function unicode.isWide(s)
-    if type(s) ~= "string" then return nil, "string expected" end
-    local cp = utf8.codepoint(s)
-    if not cp then return nil, "invalid UTF-8 or empty string" end
+    if type(s) ~= "string" then
+        return nil, "bad argument #1 to 'isWide' (string expected)"
+    end
+    local cp
+    local ok, err = pcall(utf8.codepoint, s)
+    if not ok then
+        return nil, err
+    end
+    cp = err
+    -- ensure exactly one codepoint
+    local _, count = string.gsub(s, "[\x80-\xBF]", "") -- count continuation bytes
     if utf8.len(s) ~= 1 then
         return nil, "string must contain exactly one character"
     end
-    return is_wide_cp(cp)
+    return is_codepoint_wide(cp)
 end
 
---- unicode.charWidth(s) -> 2 если широкий, иначе 1
+-- charWidth(s) -> 2 if wide, 1 otherwise
 function unicode.charWidth(s)
     local ok, wide = unicode.isWide(s)
-    if not ok then return nil, wide end
+    if not ok then
+        return nil, wide   -- wide holds the error message
+    end
     return wide and 2 or 1
 end
 
---- unicode.wlen(s) -> общая ширина строки
+-- wlen(s) -> total display width
 function unicode.wlen(s)
-    if type(s) ~= "string" then return nil, "string expected" end
+    if type(s) ~= "string" then
+        return nil, "bad argument #1 to 'wlen' (string expected)"
+    end
     local total = 0
     for cp in utf8.codes(s) do
-        total = total + (is_wide_cp(cp) and 2 or 1)
+        total = total + (is_codepoint_wide(cp) and 2 or 1)
     end
     return total
 end
 
---- unicode.wtrunc(s, n) -> обрезать строку до ширины n (не превышая)
+-- wtrunc(s, n) -> truncate s to at most n display width
 function unicode.wtrunc(s, n)
-  if type(s) ~= "string" then return nil, "string expected" end
-  if type(n) ~= "number" then return nil, "number expected" end
-  if n < 1 then return nil, "width must be at least 1" end
-  n = n - 1   -- теперь n — максимальная ширина префикса (0 допустимо)
-  local parts = {}
-  local width = 0
-  for cp in utf8.codes(s) do
-      local cw = is_wide_cp(cp) and 2 or 1
-      if width + cw > n then break end
-      width = width + cw
-      table.insert(parts, utf8.char(cp))
-  end
-  return table.concat(parts)
+    if type(s) ~= "string" then
+        return nil, "bad argument #1 to 'wtrunc' (string expected)"
+    end
+    if type(n) ~= "number" then
+        return nil, "bad argument #2 to 'wtrunc' (number expected)"
+    end
+    n = n - 1
+    if n < 0 then
+        return ""
+    end
+    local result = {}
+    local width = 0
+    for cp in utf8.codes(s) do
+        local cw = is_codepoint_wide(cp) and 2 or 1
+        if width + cw > n then
+            break
+        end
+        width = width + cw
+        table.insert(result, utf8.char(cp))
+    end
+    return table.concat(result)
 end
 
 -------------------------------- serialization
@@ -595,221 +600,81 @@ end
 
 -------------------------------- gpu
 
--- gpu.lua
--- Эмуляция OpenComputers GPU API для Linux-терминала (ANSI escape-последовательности)
--- Совместимость: Lua 5.3+, терминал с поддержкой 24-битного цвета (truecolor)
-
 local gpu = {}
 
--- ----------------------------------------------------------------------
--- Внутреннее состояние
--- ----------------------------------------------------------------------
 local state = {
-    width  = 80,      -- текущая ширина (условно)
-    height = 25,      -- текущая высота (условно)
-    bg     = 0x000000, -- фоновый цвет (RGB)
-    fg     = 0xFFFFFF, -- цвет текста (RGB)
-    cursor_x = 1,
-    cursor_y = 1,
-    buffer = {},      -- для эмуляции get(x,y) — хранит символы с цветами
+    width  = 80,
+    height = 25,
+    bg     = 0x000000,
+    fg     = 0xFFFFFF,
+    buffer = {},
 }
 
--- Буфер для хранения содержимого экрана (для get())
--- Ключи: "x,y" -> {char, fg, bg}
-local screen_buffer = {}
-
--- ----------------------------------------------------------------------
--- Вспомогательные функции
--- ----------------------------------------------------------------------
-
--- Преобразует 0xRRGGBB в ANSI RGB-строку "r;g;b" (0-255)
-local function rgb_to_ansi(rgb)
-    local r = math.floor(rgb / 0x10000) % 0x100
-    local g = math.floor(rgb / 0x100) % 0x100
-    local b = rgb % 0x100
-    return string.format("%d;%d;%d", r, g, b)
-end
-
--- Формирует ANSI-последовательность для установки цвета фона (truecolor)
-local function ansi_bg(rgb)
-    return "\x1b[48;2;" .. rgb_to_ansi(rgb) .. "m"
-end
-
--- Формирует ANSI-последовательность для установки цвета текста (truecolor)
-local function ansi_fg(rgb)
-    return "\x1b[38;2;" .. rgb_to_ansi(rgb) .. "m"
-end
-
--- Формирует ANSI-последовательность для перемещения курсора (1-based)
-local function ansi_goto(x, y)
-    return string.format("\x1b[%d;%dH", y, x)
-end
-
--- Формирует ANSI-последовательность для очистки экрана
-local function ansi_clear()
-    return "\x1b[2J\x1b[H"
-end
-
-local function afterGpu()
-  term.setCursor(term.getCursor())
-end
-
--- ----------------------------------------------------------------------
--- Публичное API (эмуляция GPU из OpenComputers)
--- ----------------------------------------------------------------------
-
---- Возвращает текущее разрешение экрана.
 function gpu.getResolution()
     return state.width, state.height
 end
 
---- Устанавливает разрешение (эмуляция — просто запоминаем значения).
 function gpu.setResolution(w, h)
     state.width = w
     state.height = h
     return true
 end
 
---- Возвращает максимальное поддерживаемое разрешение.
-function gpu.maxResolution()
-    return 999, 999  -- условно безгранично
-end
-
---- Возвращает текущий цвет фона (RGB).
 function gpu.getBackground()
-    return state.bg, false  -- false = не палитра
+    return state.bg, false
 end
 
---- Устанавливает цвет фона (RGB).
 function gpu.setBackground(color)
     state.bg = color
-    io.write(ansi_bg(color))
     return color, nil
 end
 
---- Возвращает текущий цвет текста (RGB).
 function gpu.getForeground()
     return state.fg, false
 end
 
---- Устанавливает цвет текста (RGB).
 function gpu.setForeground(color)
-    state.fg = color
-    io.write(ansi_fg(color))
-    return color, nil
+
 end
 
---- Записывает строку в указанную позицию (один ряд, без переносов).
 function gpu.set(x, y, value)
-    -- Обрезаем до ширины экрана (если строка длиннее)
-    local str = value
-    if #str > state.width - x + 1 then
-        str = str:sub(1, state.width - x + 1)
-    end
 
-    -- Запоминаем в буфер для get()
-    local key = x .. "," .. y
-    screen_buffer[key] = { char = str, fg = state.fg, bg = state.bg }
-
-    -- Выводим с сохранением цвета
-    io.write(ansi_goto(x, y) .. ansi_fg(state.fg) .. ansi_bg(state.bg) .. str)
-
-    -- Сбрасываем цвет (чтобы не залить весь терминал)
-    io.write("\x1b[0m")
-    io.flush()
-
-    afterGpu()
-    return true
 end
 
---- Возвращает символ в указанной позиции и его цвета.
-function gpu.get(x, y)
-    local key = x .. "," .. y
-    local cell = screen_buffer[key]
-    if cell then
-        return cell.char, cell.fg, cell.bg, nil, nil
-    end
-    return nil
-end
-
---- Заполняет прямоугольник указанным символом.
 function gpu.fill(x, y, width, height, char)
-    if not char or #char == 0 then char = " " end
-    local c = char:sub(1, 1)  -- берём первый символ
-
-    for row = y, y + height - 1 do
-        for col = x, x + width - 1 do
-            if col <= state.width and row <= state.height then
-                local key = col .. "," .. row
-                screen_buffer[key] = { char = c, fg = state.fg, bg = state.bg }
-            end
-        end
-    end
-
-    -- Для больших заливок используем цикл, но можно оптимизировать через строки
-    for row = y, y + height - 1 do
-        if row <= state.height then
-            local line = string.rep(c, math.min(width, state.width - x + 1))
-            io.write(ansi_goto(x, row) .. ansi_fg(state.fg) .. ansi_bg(state.bg) .. line)
-        end
-    end
-
-    io.write("\x1b[0m")
-    io.flush()
-
-    afterGpu()
-    return true
+  
 end
 
---- Копирует область буфера в другое место.
 function gpu.copy(x, y, width, height, tx, ty)
-    local src_x, src_y = x, y
-    local dst_x, dst_y = x + tx, y + ty
-
-    -- Собираем данные из буфера (чтобы не зависеть от порядка копирования)
-    local cells = {}
-    for row = src_y, src_y + height - 1 do
-        for col = src_x, src_x + width - 1 do
-            local key = col .. "," .. row
-            if screen_buffer[key] then
-                local dst_key = (col + tx) .. "," .. (row + ty)
-                cells[dst_key] = screen_buffer[key]
-            end
-        end
-    end
-
-    -- Применяем скопированные данные
-    for dst_key, cell in pairs(cells) do
-        screen_buffer[dst_key] = cell
-        local c, r = dst_key:match("^(%d+),(%d+)$")
-        if c and r then
-            c, r = tonumber(c), tonumber(r)
-            if c <= state.width and r <= state.height then
-                io.write(ansi_goto(c, r) .. ansi_fg(cell.fg) .. ansi_bg(cell.bg) .. cell.char)
-            end
-        end
-    end
-
-    io.write("\x1b[0m")
-    io.flush()
-
-    afterGpu()
-    return true
+  
 end
 
-function gpu.clear()
-    io.write(ansi_clear())
-    screen_buffer = {}
-    io.flush()
-
-    afterGpu()
-    return true
+local function rgb_to_ansi(rgb)
+  local r = math.floor(rgb / 0x10000) % 0x100
+  local g = math.floor(rgb / 0x100) % 0x100
+  local b = rgb % 0x100
+  return string.format("%d;%d;%d", r, g, b)
 end
 
-io.write("\x1b[0m")
-gpu.clear()
-gpu.setForeground(0xFFFFFF)
-gpu.setBackground(0x000000)
+local function ansi_bg(rgb)
+  return "\x1b[48;2;" .. rgb_to_ansi(rgb) .. "m"
+end
+
+local function ansi_fg(rgb)
+  return "\x1b[38;2;" .. rgb_to_ansi(rgb) .. "m"
+end
+
+local function ansi_goto(x, y)
+  return string.format("\x1b[%d;%dH", y, x)
+end
+
+local function ansi_clear()
+  return "\x1b[2J\x1b[H"
+end
+
+function gpu.update()
+  term.setCursor(term.getCursor())
+end
 
 -------------------------------- edit
 
@@ -838,8 +703,6 @@ elseif (not fs.exists(filename) and fs.isReadOnly(file_parentpath)) or (fs.exist
   io.stderr:write("file system is read only\n")
   os.exit(1)
 end
-
-
 
 local function loadConfig()
   -- Try to load user settings.
