@@ -474,6 +474,23 @@ function term.clear()
   os.execute("clear")
 end
 
+local function rawPull()
+  local eventTbl = {}
+
+  return eventTbl
+end
+
+function term.pull(eventName)
+  local eventTbl = rawPull()
+  if eventName then
+    if eventTbl[1] == eventName then
+      return table.unpack(eventTbl)
+    end
+  else
+    return table.unpack(eventTbl)
+  end
+end
+
 -------------------------------- filesystem
 
 local fs = {}
@@ -563,7 +580,274 @@ end
 
 -------------------------------- gpu
 
+-- gpu.lua
+-- Эмуляция OpenComputers GPU API для Linux-терминала (ANSI escape-последовательности)
+-- Совместимость: Lua 5.3+, терминал с поддержкой 24-битного цвета (truecolor)
 
+local gpu = {}
+
+-- ----------------------------------------------------------------------
+-- Внутреннее состояние
+-- ----------------------------------------------------------------------
+local state = {
+    width  = 80,      -- текущая ширина (условно)
+    height = 25,      -- текущая высота (условно)
+    bg     = 0x000000, -- фоновый цвет (RGB)
+    fg     = 0xFFFFFF, -- цвет текста (RGB)
+    cursor_x = 1,
+    cursor_y = 1,
+    buffer = {},      -- для эмуляции get(x,y) — хранит символы с цветами
+}
+
+-- Буфер для хранения содержимого экрана (для get())
+-- Ключи: "x,y" -> {char, fg, bg}
+local screen_buffer = {}
+
+-- ----------------------------------------------------------------------
+-- Вспомогательные функции
+-- ----------------------------------------------------------------------
+
+-- Преобразует 0xRRGGBB в ANSI RGB-строку "r;g;b" (0-255)
+local function rgb_to_ansi(rgb)
+    local r = math.floor(rgb / 0x10000) % 0x100
+    local g = math.floor(rgb / 0x100) % 0x100
+    local b = rgb % 0x100
+    return string.format("%d;%d;%d", r, g, b)
+end
+
+-- Формирует ANSI-последовательность для установки цвета фона (truecolor)
+local function ansi_bg(rgb)
+    return "\x1b[48;2;" .. rgb_to_ansi(rgb) .. "m"
+end
+
+-- Формирует ANSI-последовательность для установки цвета текста (truecolor)
+local function ansi_fg(rgb)
+    return "\x1b[38;2;" .. rgb_to_ansi(rgb) .. "m"
+end
+
+-- Формирует ANSI-последовательность для перемещения курсора (1-based)
+local function ansi_goto(x, y)
+    return string.format("\x1b[%d;%dH", y, x)
+end
+
+-- Формирует ANSI-последовательность для очистки экрана
+local function ansi_clear()
+    return "\x1b[2J\x1b[H"
+end
+
+-- ----------------------------------------------------------------------
+-- Публичное API (эмуляция GPU из OpenComputers)
+-- ----------------------------------------------------------------------
+
+--- Возвращает текущее разрешение экрана.
+function gpu.getResolution()
+    return state.width, state.height
+end
+
+--- Устанавливает разрешение (эмуляция — просто запоминаем значения).
+function gpu.setResolution(w, h)
+    state.width = w
+    state.height = h
+    return true
+end
+
+--- Возвращает максимальное поддерживаемое разрешение.
+function gpu.maxResolution()
+    return 999, 999  -- условно безгранично
+end
+
+--- Возвращает текущий цвет фона (RGB).
+function gpu.getBackground()
+    return state.bg, false  -- false = не палитра
+end
+
+--- Устанавливает цвет фона (RGB).
+function gpu.setBackground(color)
+    state.bg = color
+    io.write(ansi_bg(color))
+    return color, nil
+end
+
+--- Возвращает текущий цвет текста (RGB).
+function gpu.getForeground()
+    return state.fg, false
+end
+
+--- Устанавливает цвет текста (RGB).
+function gpu.setForeground(color)
+    state.fg = color
+    io.write(ansi_fg(color))
+    return color, nil
+end
+
+--- Записывает строку в указанную позицию (один ряд, без переносов).
+function gpu.set(x, y, value)
+    -- Обрезаем до ширины экрана (если строка длиннее)
+    local str = value
+    if #str > state.width - x + 1 then
+        str = str:sub(1, state.width - x + 1)
+    end
+
+    -- Запоминаем в буфер для get()
+    local key = x .. "," .. y
+    screen_buffer[key] = { char = str, fg = state.fg, bg = state.bg }
+
+    -- Выводим с сохранением цвета
+    io.write(ansi_goto(x, y) .. ansi_fg(state.fg) .. ansi_bg(state.bg) .. str)
+
+    -- Сбрасываем цвет (чтобы не залить весь терминал)
+    io.write("\x1b[0m")
+    io.flush()
+    return true
+end
+
+--- Возвращает символ в указанной позиции и его цвета.
+function gpu.get(x, y)
+    local key = x .. "," .. y
+    local cell = screen_buffer[key]
+    if cell then
+        return cell.char, cell.fg, cell.bg, nil, nil
+    end
+    return nil
+end
+
+--- Заполняет прямоугольник указанным символом.
+function gpu.fill(x, y, width, height, char)
+    if not char or #char == 0 then char = " " end
+    local c = char:sub(1, 1)  -- берём первый символ
+
+    for row = y, y + height - 1 do
+        for col = x, x + width - 1 do
+            if col <= state.width and row <= state.height then
+                local key = col .. "," .. row
+                screen_buffer[key] = { char = c, fg = state.fg, bg = state.bg }
+            end
+        end
+    end
+
+    -- Для больших заливок используем цикл, но можно оптимизировать через строки
+    for row = y, y + height - 1 do
+        if row <= state.height then
+            local line = string.rep(c, math.min(width, state.width - x + 1))
+            io.write(ansi_goto(x, row) .. ansi_fg(state.fg) .. ansi_bg(state.bg) .. line)
+        end
+    end
+
+    io.write("\x1b[0m")
+    io.flush()
+    return true
+end
+
+--- Копирует область буфера в другое место.
+function gpu.copy(x, y, width, height, tx, ty)
+    local src_x, src_y = x, y
+    local dst_x, dst_y = x + tx, y + ty
+
+    -- Собираем данные из буфера (чтобы не зависеть от порядка копирования)
+    local cells = {}
+    for row = src_y, src_y + height - 1 do
+        for col = src_x, src_x + width - 1 do
+            local key = col .. "," .. row
+            if screen_buffer[key] then
+                local dst_key = (col + tx) .. "," .. (row + ty)
+                cells[dst_key] = screen_buffer[key]
+            end
+        end
+    end
+
+    -- Применяем скопированные данные
+    for dst_key, cell in pairs(cells) do
+        screen_buffer[dst_key] = cell
+        local c, r = dst_key:match("^(%d+),(%d+)$")
+        if c and r then
+            c, r = tonumber(c), tonumber(r)
+            if c <= state.width and r <= state.height then
+                io.write(ansi_goto(c, r) .. ansi_fg(cell.fg) .. ansi_bg(cell.bg) .. cell.char)
+            end
+        end
+    end
+
+    io.write("\x1b[0m")
+    io.flush()
+    return true
+end
+
+--- Очищает экран.
+function gpu.clear()
+    io.write(ansi_clear())
+    screen_buffer = {}
+    io.flush()
+    return true
+end
+
+--- Возвращает размер экрана в блоках (для совместимости).
+function gpu.getSize()
+    return 1, 1
+end
+
+--- Возвращает текущую цветовую глубину (всегда 8 для truecolor).
+function gpu.getDepth()
+    return 8
+end
+
+--- Устанавливает цветовую глубину (эмуляция — всегда truecolor).
+function gpu.setDepth(bits)
+    return "EightBit"
+end
+
+--- Возвращает максимальную глубину цвета.
+function gpu.maxDepth()
+    return 8
+end
+
+--- Привязка к экрану (заглушка, т.к. в Linux экран один).
+function gpu.bind(address)
+    return true
+end
+
+--- Возвращает адрес экрана (заглушка).
+function gpu.getScreen()
+    return "linux_screen"
+end
+
+--- Возвращает текущий вьюпорт (заглушка).
+function gpu.getViewport()
+    return state.width, state.height
+end
+
+--- Устанавливает вьюпорт (заглушка).
+function gpu.setViewport(w, h)
+    return true
+end
+
+--- Функции работы с палитрой (заглушки для совместимости).
+function gpu.getPaletteColor(index)
+    return 0xFFFFFF
+end
+
+function gpu.setPaletteColor(index, value)
+    return value
+end
+
+--- Функции Video RAM (заглушки для совместимости).
+function gpu.getActiveBuffer() return 0 end
+function gpu.setActiveBuffer(index) return index end
+function gpu.buffers() return {} end
+function gpu.allocateBuffer(w, h) return 1 end
+function gpu.freeBuffer(index) return true end
+function gpu.freeAllBuffers() end
+function gpu.totalMemory() return 1024 * 1024 end
+function gpu.freeMemory() return 1024 * 1024 end
+function gpu.getBufferSize(index) return state.width, state.height end
+function gpu.bitblt(...) return true end
+
+-- ----------------------------------------------------------------------
+-- Инициализация: сбрасываем цвета и чистим экран
+-- ----------------------------------------------------------------------
+io.write("\x1b[0m")
+gpu.clear()
+gpu.setForeground(0xFFFFFF)
+gpu.setBackground(0x000000)
 
 -------------------------------- edit
 
