@@ -500,14 +500,20 @@ function fs.concat(...)
   return fs.canonical(table.concat(set, "/"))
 end
 
-function fs.path(path)
-  local parts = segments(path)
-  local result = table.concat(parts, "/", 1, #parts - 1) .. "/"
-  if unicode.sub(path, 1, 1) == "/" and unicode.sub(result, 1, 1) ~= "/" then
-    return "/" .. result
-  else
-    return result
-  end
+function fs.absolute(path)
+  local cmd = "readlink -f '" .. path .. "' 2>/dev/null"
+  local handle = io.popen(cmd)
+  local result = handle:read("*l")
+  handle:close()
+  return result
+end
+
+function fs.dirname(path)
+  local cmd = "dirname '" .. path .. "' 2>/dev/null"
+  local handle = io.popen(cmd)
+  local result = handle:read("*l")
+  handle:close()
+  return result or "."
 end
 
 function fs.name(path)
@@ -557,19 +563,21 @@ if not filename then
   io.write("Usage: edit <filename>\n")
   os.exit(1)
 end
-local file_parentpath = fs.path(filename)
+
+filename = fs.absolute(filename)
+local file_parentpath = fs.dirname(filename)
 
 if fs.exists(file_parentpath) and not fs.isDirectory(file_parentpath) then
   io.stderr:write(string.format("Not a directory: %s\n", file_parentpath))
   os.exit(1)
 end
 
-local readonly = fs.isReadOnly(filename)
-
+local readonly = false
 if fs.isDirectory(filename) then
   io.stderr:write("file is a directory\n")
   os.exit(1)
-elseif not fs.exists(filename) and readonly then
+elseif (not fs.exists(filename) and fs.isReadOnly(file_parentpath)) or (fs.exists(filename) and fs.isReadOnly(filename)) then
+  readonly = true
   io.stderr:write("file system is read only\n")
   os.exit(1)
 end
