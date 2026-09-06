@@ -679,7 +679,7 @@ local function rawKeyboardPull()
 
   local charbyte = string.byte(char)
 
-  if charbyte >= 1 and charbyte <= 26 then
+  if charbyte >= 1 and charbyte <= 26 and charbyte ~= 10 then
     local key_code = charbyte + 64
     keyboard.pressedCodes[keyboard.keys.lcontrol] = true
     return {"key_down", "keyboard", key_code, getCodeFromChar(key_code)}
