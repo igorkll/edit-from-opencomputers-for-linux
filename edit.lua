@@ -457,12 +457,16 @@ function term.getGlobalArea()
   return 1, 1, 80, 25
 end
 
+local function rawSetCursor(x, y)
+  os.execute("tput cup " .. x .. " " .. y)
+end
+
 function term.setCursor(x, y)
   term.cursorX = x
   term.cursorY = y
   x = x - 1
   y = y - 1
-  os.execute("tput cup " .. x .. " " .. y)
+  rawSetCursor(x, y)
 end
 
 function term.getCursor()
@@ -488,10 +492,6 @@ function term.setEchoEnabled(echo)
   else
     os.execute("stty -echo")
   end
-end
-
-function term.clear()
-  os.execute("clear")
 end
 
 local function rawPull()
@@ -603,50 +603,85 @@ end
 local gpu = {}
 
 local state = {
-    width  = 80,
-    height = 25,
-    bg     = 0x000000,
-    fg     = 0xFFFFFF,
-    buffer = {},
+  width  = 80,
+  height = 25,
+  bg     = 0x000000,
+  fg     = 0xFFFFFF,
+  buffer = {}
 }
 
 function gpu.getResolution()
-    return state.width, state.height
+  return state.width, state.height
 end
 
 function gpu.setResolution(w, h)
-    state.width = w
-    state.height = h
-    return true
+  state.width = w
+  state.height = h
+  return true
 end
 
 function gpu.getBackground()
-    return state.bg, false
+  return state.bg, false
 end
 
 function gpu.setBackground(color)
-    state.bg = color
-    return color, nil
+  state.bg = color
+  return color, nil
 end
 
 function gpu.getForeground()
-    return state.fg, false
+  return state.fg, false
 end
 
 function gpu.setForeground(color)
-
+  state.fg = color
+  return color, nil
 end
 
 function gpu.set(x, y, value)
-
+  state.buffer[x + (y * state.width)] = {state.bg, state.fg, value}
 end
 
 function gpu.fill(x, y, width, height, char)
-  
+  local x2 = x + (width - 1)
+  local y2 = y + (height - 1)
+  for ix = x, x2 do
+    for iy = y, y2 do
+      gpu.set(ix, iy, char)
+    end
+  end
 end
 
 function gpu.copy(x, y, width, height, tx, ty)
-  
+  local w = state.width
+  local h = state.height
+  local temp = {}  -- временное хранилище для копируемых ячеек
+
+  for i = 0, width - 1 do
+      for j = 0, height - 1 do
+          local sx = x + i
+          local sy = y + j
+          local dx = sx + tx
+          local dy = sy + ty
+
+          -- Читаем только если исходная точка в пределах буфера
+          if sx >= 1 and sx <= w and sy >= 1 and sy <= h then
+              local src_idx = sx + sy * w
+              local cell = state.buffer[src_idx]
+              if cell then
+                  -- Записываем во временный буфер, если целевая точка в пределах
+                  if dx >= 1 and dx <= w and dy >= 1 and dy <= h then
+                      local dst_idx = dx + dy * w
+                      temp[dst_idx] = cell
+                  end
+              end
+          end
+      end
+  end
+
+  for idx, cell in pairs(temp) do
+      state.buffer[idx] = cell
+  end
 end
 
 local function rgb_to_ansi(rgb)
@@ -673,6 +708,17 @@ local function ansi_clear()
 end
 
 function gpu.update()
+  for ix = 1, state.width do
+    for iy = 1, state.height do
+      local charinfo = state.buffer[ix + (iy * state.width)]
+
+      rawSetCursor(ix, iy)
+      io.write(ansi_bg(charinfo[1]))
+      io.write(ansi_fg(charinfo[2]))
+      io.write(charinfo[3])
+    end
+  end
+
   term.setCursor(term.getCursor())
 end
 
@@ -703,6 +749,14 @@ elseif (not fs.exists(filename) and fs.isReadOnly(file_parentpath)) or (fs.exist
   io.stderr:write("file system is read only\n")
   os.exit(1)
 end
+
+term.setCursorBlink(true)
+term.setEchoEnabled(false)
+
+local _, _, rx, ry = term.getGlobalArea()
+gpu.setResolution(rx, ry)
+gpu.fill(1, 1, rx, ry, " ")
+gpu.update()
 
 local function loadConfig()
   -- Try to load user settings.
@@ -747,10 +801,6 @@ local function loadConfig()
   end
   return env
 end
-
-term.clear()
-term.setCursorBlink(true)
-term.setEchoEnabled(false)
 
 local running = true
 local buffer = {}
@@ -1384,9 +1434,11 @@ local ok, err = xpcall(function()
   end
 end, debug.traceback)
 
-term.clear()
 term.setCursorBlink(true)
 term.setEchoEnabled(true)
+term.setCursor(1, 1)
+os.execute("\x1b[0m")
+os.execute("clear")
 
 if not ok then
   io.stderr:write("unhandled exception: " .. tostring(err or "unknown") .. "\n")
