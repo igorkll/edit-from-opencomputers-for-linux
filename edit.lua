@@ -439,12 +439,21 @@ end
 -------------------------------- term
 
 local term = {
-  cursorX = 0
+  cursorX = 0,
   cursorY = 0
 }
 
 function term.getGlobalArea()
-  return 0, 0, 80, 25
+  local handle = io.popen("stty size 2>/dev/null")
+  local output = handle:read("*l")
+  handle:close()
+  if output then
+      local rows, cols = output:match("^(%d+) (%d+)$")
+      if rows and cols then
+          return 1, 1, tonumber(cols), tonumber(rows)
+      end
+  end
+  return 1, 1, 80, 25
 end
 
 function term.setCursor(x, y)
