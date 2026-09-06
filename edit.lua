@@ -457,16 +457,14 @@ function term.getGlobalArea()
   return 1, 1, 80, 25
 end
 
-local function rawSetCursor(x, y)
-  os.execute("tput cup " .. x .. " " .. y)
+local function ansi_goto(x, y)
+  return string.format("\x1b[%d;%dH", y, x)
 end
 
 function term.setCursor(x, y)
   term.cursorX = x
   term.cursorY = y
-  x = x - 1
-  y = y - 1
-  rawSetCursor(x, y)
+  io.write(ansi_goto(x, y))
 end
 
 function term.getCursor()
@@ -639,7 +637,13 @@ function gpu.setForeground(color)
 end
 
 function gpu.set(x, y, value)
-  state.buffer[x + (y * state.width)] = {state.bg, state.fg, value}
+  x = x - 1
+  y = y - 1
+  for i = 1, unicode.len(value) do
+    state.buffer[x + (y * state.width)] = {state.bg, state.fg, unicode.sub(value, i, i)}
+    x = x + 1
+    if x > state.width then return end
+  end
 end
 
 function gpu.fill(x, y, width, height, char)
@@ -666,12 +670,12 @@ function gpu.copy(x, y, width, height, tx, ty)
 
           -- Читаем только если исходная точка в пределах буфера
           if sx >= 1 and sx <= w and sy >= 1 and sy <= h then
-              local src_idx = sx + sy * w
+              local src_idx = (sx - 1) + ((sy - 1) * w)
               local cell = state.buffer[src_idx]
               if cell then
                   -- Записываем во временный буфер, если целевая точка в пределах
                   if dx >= 1 and dx <= w and dy >= 1 and dy <= h then
-                      local dst_idx = dx + dy * w
+                      local dst_idx = (dx - 1) + ((dy - 1) * w)
                       temp[dst_idx] = cell
                   end
               end
@@ -699,10 +703,6 @@ local function ansi_fg(rgb)
   return "\x1b[38;2;" .. rgb_to_ansi(rgb) .. "m"
 end
 
-local function ansi_goto(x, y)
-  return string.format("\x1b[%d;%dH", y, x)
-end
-
 local function ansi_clear()
   return "\x1b[2J\x1b[H"
 end
@@ -710,9 +710,9 @@ end
 function gpu.update()
   for ix = 1, state.width do
     for iy = 1, state.height do
-      local charinfo = state.buffer[ix + (iy * state.width)]
+      local charinfo = state.buffer[(ix - 1) + ((iy - 1) * state.width)]
 
-      rawSetCursor(ix, iy)
+      io.write(ansi_goto(ix, iy))
       io.write(ansi_bg(charinfo[1]))
       io.write(ansi_fg(charinfo[2]))
       io.write(charinfo[3])
@@ -1181,6 +1181,8 @@ local function find()
     elseif not keyboard.isControl(char) then
       findText = findText .. unicode.char(char)
     end
+
+    gpu.update()
   end
   setCursor(cbx, cby)
   setStatus(helpStatusText())
@@ -1431,12 +1433,12 @@ local ok, err = xpcall(function()
     if blink then
       term.setCursorBlink(true)
     end
+    gpu.update()
   end
 end, debug.traceback)
 
 term.setCursorBlink(true)
 term.setEchoEnabled(true)
-term.setCursor(1, 1)
 os.execute("\x1b[0m")
 os.execute("clear")
 
