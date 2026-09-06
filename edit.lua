@@ -547,12 +547,19 @@ local function rawKeyboardPull()
             end
         end
     end
-    os.execute("reset")
-    print(#seq, seq:byte(1), seq:byte(2), seq:byte(3), seq:sub(1, 1), seq:sub(2, 2), seq:sub(3, 3))
-    os.exit(1)
-    return
-end
-
+    if seq:byte(2) == 91 then
+      if seq:byte(3) == 65 then
+        return {"key_down", "keyboard", 0, 200}
+      elseif seq:byte(3) == 66 then
+        return {"key_down", "keyboard", 0, 208}
+      elseif seq:byte(3) == 67 then
+        return {"key_down", "keyboard", 0, 205}
+      elseif seq:byte(3) == 68 then
+        return {"key_down", "keyboard", 0, 203}
+      end
+    end
+  end
+  
   if charbyte == 10 then
     return {"key_down", "keyboard", 13, 28}
   elseif charbyte == 127 then
@@ -564,14 +571,6 @@ end
 
 function term.pull(eventName)
   local eventTbl = rawKeyboardPull() or {}
-
-  if eventTbl[1] == "key_down" then
-    keyboard.pressedChars[eventTbl[3]] = true
-    keyboard.pressedCodes[eventTbl[4]] = true
-  elseif eventTbl[1] == "key_up" then
-    keyboard.pressedChars[eventTbl[3]] = false
-    keyboard.pressedCodes[eventTbl[4]] = false
-  end
 
   if eventName then
     if eventTbl[1] == eventName then
