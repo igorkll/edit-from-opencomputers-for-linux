@@ -514,7 +514,7 @@ end
 local term = {}
 
 function term.setCursor(x, y)
-  
+  os.execute("tput cup " .. x .. " " .. y)
 end
 
 function term.getCursor()
@@ -546,6 +546,10 @@ local function segments(path)
     end
   end
   return parts
+end
+
+local function escPath(path)
+  return "\"" .. path .. "\""
 end
 
 function fs.canonical(path)
@@ -595,6 +599,10 @@ end
 
 function fs.isReadOnly(path)
   return false
+end
+
+function fs.makeDirectory(path)
+  os.execute("mkdir " .. escPath(path))
 end
 
 -------------------------------- gpu
