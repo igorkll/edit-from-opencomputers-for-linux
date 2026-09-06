@@ -728,6 +728,9 @@ local function rawKeyboardPull()
 end
 
 function term.pull(eventName)
+  keyboard.pressedChars = {}
+  keyboard.pressedCodes = {}
+
   local eventTbl = rawKeyboardPull() or {}
 
   if eventName then
