@@ -469,7 +469,16 @@ function term.getCursor()
 end
 
 function term.setCursorBlink(blink)
-
+  if blink then
+      io.write("\x1b[?25h") -- show cursor
+      -- попробуем включить мигание (некоторые терминалы)
+      io.write("\x1b[?12h")
+  else
+      io.write("\x1b[?25l") -- hide cursor
+      -- можно также отключить мигание (но это необязательно)
+      io.write("\x1b[?12l")
+  end
+  io.flush()
 end
 
 function term.setEchoEnabled(echo)
