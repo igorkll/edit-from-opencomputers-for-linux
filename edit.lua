@@ -439,8 +439,8 @@ end
 -------------------------------- term
 
 local term = {
-  cursorX = 0,
-  cursorY = 0
+  cursorX = 1,
+  cursorY = 1
 }
 
 function term.getGlobalArea()
@@ -459,6 +459,8 @@ end
 function term.setCursor(x, y)
   term.cursorX = x
   term.cursorY = y
+  x = x - 1
+  y = y - 1
   os.execute("tput cup " .. x .. " " .. y)
 end
 
@@ -635,6 +637,10 @@ local function ansi_clear()
     return "\x1b[2J\x1b[H"
 end
 
+local function afterGpu()
+  term.setCursor(term.getCursor())
+end
+
 -- ----------------------------------------------------------------------
 -- Публичное API (эмуляция GPU из OpenComputers)
 -- ----------------------------------------------------------------------
@@ -698,6 +704,8 @@ function gpu.set(x, y, value)
     -- Сбрасываем цвет (чтобы не залить весь терминал)
     io.write("\x1b[0m")
     io.flush()
+
+    afterGpu()
     return true
 end
 
@@ -735,6 +743,8 @@ function gpu.fill(x, y, width, height, char)
 
     io.write("\x1b[0m")
     io.flush()
+
+    afterGpu()
     return true
 end
 
@@ -769,81 +779,20 @@ function gpu.copy(x, y, width, height, tx, ty)
 
     io.write("\x1b[0m")
     io.flush()
+
+    afterGpu()
     return true
 end
 
---- Очищает экран.
 function gpu.clear()
     io.write(ansi_clear())
     screen_buffer = {}
     io.flush()
+
+    afterGpu()
     return true
 end
 
---- Возвращает размер экрана в блоках (для совместимости).
-function gpu.getSize()
-    return 1, 1
-end
-
---- Возвращает текущую цветовую глубину (всегда 8 для truecolor).
-function gpu.getDepth()
-    return 8
-end
-
---- Устанавливает цветовую глубину (эмуляция — всегда truecolor).
-function gpu.setDepth(bits)
-    return "EightBit"
-end
-
---- Возвращает максимальную глубину цвета.
-function gpu.maxDepth()
-    return 8
-end
-
---- Привязка к экрану (заглушка, т.к. в Linux экран один).
-function gpu.bind(address)
-    return true
-end
-
---- Возвращает адрес экрана (заглушка).
-function gpu.getScreen()
-    return "linux_screen"
-end
-
---- Возвращает текущий вьюпорт (заглушка).
-function gpu.getViewport()
-    return state.width, state.height
-end
-
---- Устанавливает вьюпорт (заглушка).
-function gpu.setViewport(w, h)
-    return true
-end
-
---- Функции работы с палитрой (заглушки для совместимости).
-function gpu.getPaletteColor(index)
-    return 0xFFFFFF
-end
-
-function gpu.setPaletteColor(index, value)
-    return value
-end
-
---- Функции Video RAM (заглушки для совместимости).
-function gpu.getActiveBuffer() return 0 end
-function gpu.setActiveBuffer(index) return index end
-function gpu.buffers() return {} end
-function gpu.allocateBuffer(w, h) return 1 end
-function gpu.freeBuffer(index) return true end
-function gpu.freeAllBuffers() end
-function gpu.totalMemory() return 1024 * 1024 end
-function gpu.freeMemory() return 1024 * 1024 end
-function gpu.getBufferSize(index) return state.width, state.height end
-function gpu.bitblt(...) return true end
-
--- ----------------------------------------------------------------------
--- Инициализация: сбрасываем цвета и чистим экран
--- ----------------------------------------------------------------------
 io.write("\x1b[0m")
 gpu.clear()
 gpu.setForeground(0xFFFFFF)
