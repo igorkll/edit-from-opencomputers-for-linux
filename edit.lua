@@ -23,6 +23,235 @@ end
 
 -------------------------------- unicode
 
+-- Pure Lua implementation of the OpenComputers unicode library.
+-- Requires Lua 5.3+ with the built-in utf8 library.
+-- All functions return (result) on success, or (nil, error_message) on failure,
+-- emulating the behaviour of the original spcall-wrapped version.
+
+local utf8 = require("utf8")
+
+-- ----------------------------------------------------------------------
+-- Wide character ranges (East Asian Width = W or F, plus common CJK blocks)
+-- This table is used by isWide() and charWidth().
+-- ----------------------------------------------------------------------
+local wide_ranges = {
+    {0x1100, 0x115F},   -- Hangul Jamo
+    {0x2329, 0x232A},   -- Angle brackets
+    {0x2E80, 0x2EFF},   -- CJK Radicals Supplement
+    {0x2F00, 0x2FDF},   -- Kangxi Radicals
+    {0x2FF0, 0x2FFF},   -- Ideographic Description Characters
+    {0x3000, 0x303F},   -- CJK Symbols and Punctuation
+    {0x3040, 0x309F},   -- Hiragana
+    {0x30A0, 0x30FF},   -- Katakana
+    {0x3100, 0x312F},   -- Bopomofo
+    {0x3130, 0x318F},   -- Hangul Compatibility Jamo
+    {0x3190, 0x319F},   -- Kanbun
+    {0x31A0, 0x31BF},   -- Bopomofo Extended
+    {0x31C0, 0x31EF},   -- CJK Strokes
+    {0x31F0, 0x31FF},   -- Katakana Phonetic Extensions
+    {0x3200, 0x32FF},   -- Enclosed CJK Letters and Months
+    {0x3300, 0x33FF},   -- CJK Compatibility
+    {0x3400, 0x4DBF},   -- CJK Unified Ideographs Extension A
+    {0x4E00, 0x9FFF},   -- CJK Unified Ideographs
+    {0xA000, 0xA4CF},   -- Yi Syllables
+    {0xAC00, 0xD7AF},   -- Hangul Syllables
+    {0xF900, 0xFAFF},   -- CJK Compatibility Ideographs
+    {0xFE10, 0xFE1F},   -- Vertical Forms
+    {0xFE30, 0xFE4F},   -- CJK Compatibility Forms
+    {0xFF00, 0xFFEF},   -- Halfwidth and Fullwidth Forms (Fullwidth part)
+    {0x1B000, 0x1B0FF}, -- Kana Supplement
+    {0x1B100, 0x1B12F}, -- Kana Extended-A
+    {0x1F200, 0x1F2FF}, -- Enclosed Ideographic Supplement
+    {0x20000, 0x2A6DF}, -- CJK Unified Ideographs Extension B
+    {0x2A700, 0x2B73F}, -- Extension C
+    {0x2B740, 0x2B81F}, -- Extension D
+    {0x2B820, 0x2CEAF}, -- Extension E
+    {0x2CEB0, 0x2EBEF}, -- Extension F
+    {0x2F800, 0x2FA1F}, -- CJK Compatibility Ideographs Supplement
+}
+
+-- Helper: check if a codepoint is wide
+local function is_codepoint_wide(cp)
+    for _, range in ipairs(wide_ranges) do
+        if cp >= range[1] and cp <= range[2] then
+            return true
+        end
+    end
+    return false
+end
+
+-- ----------------------------------------------------------------------
+-- Public functions
+-- ----------------------------------------------------------------------
+
+local unicode = {}
+
+-- char(...) -> string
+function unicode.char(...)
+    local ok, res = pcall(utf8.char, ...)
+    if ok then
+        return res
+    else
+        return nil, res
+    end
+end
+
+-- len(s) -> number of codepoints
+function unicode.len(s)
+    local ok, res = pcall(utf8.len, s)
+    if ok then
+        return res
+    else
+        return nil, res
+    end
+end
+
+-- lower(s) -> lowercase string (ASCII only; non‑ASCII unchanged)
+function unicode.lower(s)
+    if type(s) ~= "string" then
+        return nil, "bad argument #1 to 'lower' (string expected)"
+    end
+    local parts = {}
+    for cp in utf8.codes(s) do
+        if cp >= 65 and cp <= 90 then        -- A-Z
+            cp = cp + 32
+        end
+        table.insert(parts, utf8.char(cp))
+    end
+    return table.concat(parts)
+end
+
+-- upper(s) -> uppercase string (ASCII only; non‑ASCII unchanged)
+function unicode.upper(s)
+    if type(s) ~= "string" then
+        return nil, "bad argument #1 to 'upper' (string expected)"
+    end
+    local parts = {}
+    for cp in utf8.codes(s) do
+        if cp >= 97 and cp <= 122 then       -- a-z
+            cp = cp - 32
+        end
+        table.insert(parts, utf8.char(cp))
+    end
+    return table.concat(parts)
+end
+
+-- reverse(s) -> reversed string by codepoint, not by byte
+function unicode.reverse(s)
+    if type(s) ~= "string" then
+        return nil, "bad argument #1 to 'reverse' (string expected)"
+    end
+    local chars = {}
+    for cp in utf8.codes(s) do
+        table.insert(chars, utf8.char(cp))
+    end
+    -- reverse the table
+    local n = #chars
+    for i = 1, n // 2 do
+        chars[i], chars[n - i + 1] = chars[n - i + 1], chars[i]
+    end
+    return table.concat(chars)
+end
+
+-- sub(s, i, j) -> substring from codepoint index i to j (like string.sub)
+function unicode.sub(s, i, j)
+    if type(s) ~= "string" then
+        return nil, "bad argument #1 to 'sub' (string expected)"
+    end
+    local n = utf8.len(s)
+    if n == nil then
+        return nil, "invalid UTF-8 string"
+    end
+    if i == nil then i = 1 end
+    if j == nil then j = -1 end
+
+    -- normalise indices (same logic as string.sub)
+    if i < 0 then i = n + i + 1 end
+    if j < 0 then j = n + j + 1 end
+    if i < 1 then i = 1 end
+    if j > n then j = n end
+
+    if i > n or j < 1 or i > j then
+        return ""
+    end
+
+    local start_byte = utf8.offset(s, i)
+    if not start_byte then
+        return nil, "invalid UTF-8 string"
+    end
+    local end_byte
+    if j < n then
+        end_byte = utf8.offset(s, j + 1) - 1
+    else
+        end_byte = #s
+    end
+    return string.sub(s, start_byte, end_byte)
+end
+
+-- isWide(s) -> true if the first (and only) character in s is wide
+function unicode.isWide(s)
+    if type(s) ~= "string" then
+        return nil, "bad argument #1 to 'isWide' (string expected)"
+    end
+    local cp
+    local ok, err = pcall(utf8.codepoint, s)
+    if not ok then
+        return nil, err
+    end
+    cp = ok
+    -- ensure exactly one codepoint
+    local _, count = string.gsub(s, "[\x80-\xBF]", "") -- count continuation bytes
+    if utf8.len(s) ~= 1 then
+        return nil, "string must contain exactly one character"
+    end
+    return is_codepoint_wide(cp)
+end
+
+-- charWidth(s) -> 2 if wide, 1 otherwise
+function unicode.charWidth(s)
+    local ok, wide = unicode.isWide(s)
+    if not ok then
+        return nil, wide   -- wide holds the error message
+    end
+    return wide and 2 or 1
+end
+
+-- wlen(s) -> total display width
+function unicode.wlen(s)
+    if type(s) ~= "string" then
+        return nil, "bad argument #1 to 'wlen' (string expected)"
+    end
+    local total = 0
+    for cp in utf8.codes(s) do
+        total = total + (is_codepoint_wide(cp) and 2 or 1)
+    end
+    return total
+end
+
+-- wtrunc(s, n) -> truncate s to at most n display width
+function unicode.wtrunc(s, n)
+    if type(s) ~= "string" then
+        return nil, "bad argument #1 to 'wtrunc' (string expected)"
+    end
+    if type(n) ~= "number" then
+        return nil, "bad argument #2 to 'wtrunc' (number expected)"
+    end
+    if n < 0 then
+        return nil, "width must be non-negative"
+    end
+    local result = {}
+    local width = 0
+    for cp in utf8.codes(s) do
+        local cw = is_codepoint_wide(cp) and 2 or 1
+        if width + cw > n then
+            break
+        end
+        width = width + cw
+        table.insert(result, utf8.char(cp))
+    end
+    return table.concat(result)
+end
+
 -------------------------------- serialization
 
 local serialization = {}
@@ -375,7 +604,7 @@ if fs.exists(file_parentpath) and not fs.isDirectory(file_parentpath) then
   os.exit(1)
 end
 
-local readonly = isReadOnly(filename)
+local readonly = fs.isReadOnly(filename)
 
 if fs.isDirectory(filename) then
   io.stderr:write("file is a directory\n")
