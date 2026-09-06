@@ -708,6 +708,8 @@ local function rawKeyboardPull()
         return {"key_down", "keyboard", 0, keyboard.keys.pageDown}
       elseif seq:byte(3) == 72 then
         return {"key_down", "keyboard", 0, keyboard.keys.home}
+      elseif seq:byte(3) == 50 then
+        return {"key_down", "keyboard", 0, keyboard.keys.insert}
       else
         --os.execute("reset")
         --print(seq:byte(3))
