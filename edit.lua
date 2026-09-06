@@ -836,6 +836,14 @@ function fs.makeDirectory(path)
   os.execute("mkdir " .. escPath(path))
 end
 
+function fs.copy(fromPath, toPath)
+  os.execute("cp -f " .. escPath(fromPath) .. " " .. escPath(toPath))
+end
+
+function fs.remove(path)
+  os.execute("rm -f " .. escPath(path))
+end
+
 -------------------------------- gpu
 
 local gpu = {}
