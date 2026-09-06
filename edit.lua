@@ -674,6 +674,12 @@ local function rawKeyboardPull()
 
   local charbyte = string.byte(char)
 
+  if charbyte >= 1 and charbyte <= 26 then
+      local key_code = charbyte + 64
+      keyboard.pressedCodes[keyboard.keys.lcontrol] = true
+      return {"key_down", "keyboard", charbyte, 0}
+  end
+
   if charbyte == 27 then
     local seq = char
     local next_byte = read_byte()
