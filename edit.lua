@@ -3,15 +3,664 @@ local home_dir = os.getenv("HOME")
 local config_dir_path = home_dir .. "/.config"
 local config_path = config_dir_path .. "/edit.cfg"
 
+-------------------------------- functions
+
+local function checkArg(n, have, ...)
+  have = type(have)
+  local function check(want, ...)
+    if not want then
+      return false
+    else
+      return have == want or check(...)
+    end
+  end
+  if not check(...) then
+    local msg = string.format("bad argument #%d (%s expected, got %s)",
+                              n, table.concat({...}, " or "), have)
+    error(msg, 3)
+  end
+end
+
+-------------------------------- unicode
+
+-------------------------------- serialization
+
+local serialization = {}
+
+-- delay loaded tables fail to deserialize cross [C] boundaries (such as when having to read files that cause yields)
+local local_pairs = function(tbl)
+  local mt = getmetatable(tbl)
+  return (mt and mt.__pairs or pairs)(tbl)
+end
+
+-- Important: pretty formatting will allow presenting non-serializable values
+-- but may generate output that cannot be unserialized back.
+function serialization.serialize(value, pretty)
+  local kw =  {["and"]=true, ["break"]=true, ["do"]=true, ["else"]=true,
+               ["elseif"]=true, ["end"]=true, ["false"]=true, ["for"]=true,
+               ["function"]=true, ["goto"]=true, ["if"]=true, ["in"]=true,
+               ["local"]=true, ["nil"]=true, ["not"]=true, ["or"]=true,
+               ["repeat"]=true, ["return"]=true, ["then"]=true, ["true"]=true,
+               ["until"]=true, ["while"]=true}
+  local id = "^[%a_][%w_]*$"
+  local ts = {}
+  local result_pack = {}
+  local function recurse(current_value, depth)
+    local t = type(current_value)
+    if t == "number" then
+      if current_value ~= current_value then
+        table.insert(result_pack, "0/0")
+      elseif current_value == math.huge then
+        table.insert(result_pack, "math.huge")
+      elseif current_value == -math.huge then
+        table.insert(result_pack, "-math.huge")
+      else
+        table.insert(result_pack, tostring(current_value))
+      end
+    elseif t == "string" then
+      table.insert(result_pack, (string.format("%q", current_value):gsub("\\\n","\\n")))
+    elseif
+      t == "nil" or
+      t == "boolean" or
+      pretty and (t ~= "table" or (getmetatable(current_value) or {}).__tostring) then
+      table.insert(result_pack, tostring(current_value))
+    elseif t == "table" then
+      if ts[current_value] then
+        if pretty then
+          table.insert(result_pack, "recursion")
+          return
+        else
+          error("tables with cycles are not supported")
+        end
+      end
+      ts[current_value] = true
+      local f
+      if pretty then
+        local ks, sks, oks = {}, {}, {}
+        for k in local_pairs(current_value) do
+          if type(k) == "number" then
+            table.insert(ks, k)
+          elseif type(k) == "string" then
+            table.insert(sks, k)
+          else
+            table.insert(oks, k)
+          end
+        end
+        table.sort(ks)
+        table.sort(sks)
+        for _, k in ipairs(sks) do
+          table.insert(ks, k)
+        end
+        for _, k in ipairs(oks) do
+          table.insert(ks, k)
+        end
+        local n = 0
+        f = table.pack(function()
+          n = n + 1
+          local k = ks[n]
+          if k ~= nil then
+            return k, current_value[k]
+          else
+            return nil
+          end
+        end)
+      else
+        f = table.pack(local_pairs(current_value))
+      end
+      local i = 1
+      local first = true
+      table.insert(result_pack, "{")
+      for k, v in table.unpack(f) do
+        if not first then
+          table.insert(result_pack, ",")
+          if pretty then
+            table.insert(result_pack, "\n" .. string.rep(" ", depth))
+          end
+        end
+        first = nil
+        local tk = type(k)
+        if tk == "number" and k == i then
+          i = i + 1
+          recurse(v, depth + 1)
+        else
+          if tk == "string" and not kw[k] and string.match(k, id) then
+            table.insert(result_pack, k)
+          else
+            table.insert(result_pack, "[")
+            recurse(k, depth + 1)
+            table.insert(result_pack, "]")
+          end
+          table.insert(result_pack, "=")
+          recurse(v, depth + 1)
+        end
+      end
+      ts[current_value] = nil -- allow writing same table more than once
+      table.insert(result_pack, "}")
+    else
+      error("unsupported type: " .. t)
+    end
+  end
+  recurse(value, 1)
+  local result = table.concat(result_pack)
+  if pretty then
+    local limit = type(pretty) == "number" and pretty or 10
+    local truncate = 0
+    while limit > 0 and truncate do
+      truncate = string.find(result, "\n", truncate + 1, true)
+      limit = limit - 1
+    end
+    if truncate then
+      return result:sub(1, truncate) .. "..."
+    end
+  end
+  return result
+end
+
+function serialization.unserialize(data)
+  checkArg(1, data, "string")
+  local result, reason = load("return " .. data, "=data", nil, {math={huge=math.huge}})
+  if not result then
+    return nil, reason
+  end
+  local ok, output = pcall(result)
+  if not ok then
+    return nil, output
+  end
+  return output
+end
+
+-------------------------------- text
+
+--local tx = require("transforms")
+
+local text = {}
+text.internal = {}
+
+text.syntax = {"^%d?>>?&%d+","^%d?>>?",">>?","<%&%d+","<",";","&&","||?"}
+
+function text.trim(value) -- from http://lua-users.org/wiki/StringTrim
+  local from = string.match(value, "^%s*()")
+  return from > #value and "" or string.match(value, ".*%S", from)
+end
+
+-- used by lib/sh
+function text.escapeMagic(txt)
+  return txt:gsub('[%(%)%.%%%+%-%*%?%[%^%$]', '%%%1')
+end
+
+function text.removeEscapes(txt)
+  return txt:gsub("%%([%(%)%.%%%+%-%*%?%[%^%$])","%1")
+end
+
+function text.internal.tokenize(value, options)
+  checkArg(1, value, "string")
+  checkArg(2, options, "table", "nil")
+  options = options or {}
+  local delimiters = options.delimiters
+  local custom = not not options.delimiters
+  delimiters = delimiters or text.syntax
+
+  local words, reason = text.internal.words(value, options)
+
+  local splitter = text.escapeMagic(custom and table.concat(delimiters) or "<>|;&")
+  if type(words) ~= "table" or
+    #splitter == 0 or
+    not value:find("["..splitter.."]") then
+    return words, reason
+  end
+
+  return text.internal.splitWords(words, delimiters)
+end
+
+-- tokenize input by quotes and whitespace
+function text.internal.words(input, options)
+  checkArg(1, input, "string")
+  checkArg(2, options, "table", "nil")
+  options = options or {}
+  local quotes = options.quotes
+  local show_escapes = options.show_escapes
+  local qr = nil
+  quotes = quotes or {{"'","'",true},{'"','"'},{'`','`'}}
+  local function append(dst, txt, _qr)
+    local size = #dst
+    if size == 0 or dst[size].qr ~= _qr then
+      dst[size+1] = {txt=txt, qr=_qr}
+    else
+      dst[size].txt = dst[size].txt..txt
+    end
+  end
+  -- token meta is {string,quote rule}
+  local tokens, token = {}, {}
+  local escaped, start = false, -1
+  for i = 1, unicode.len(input) do
+    local char = unicode.sub(input, i, i)
+    if escaped then -- escaped character
+      escaped = false
+      -- include escape char if show_escapes
+      -- or the followwing are all true
+      -- 1. qr active
+      -- 2. the char escaped is NOT the qr closure
+      -- 3. qr is not literal
+      if show_escapes or (qr and not qr[3] and qr[2] ~= char) then
+        append(token, '\\', qr)
+      end
+      append(token, char, qr)
+    elseif char == "\\" and (not qr or not qr[3]) then
+        escaped = true
+    elseif qr and qr[2] == char then -- end of quoted string
+      -- if string is empty, we can still capture a quoted empty arg
+      if #token == 0 or #token[#token] == 0 then
+        append(token, '', qr)
+      end
+      qr = nil
+    elseif not qr and tx.first(quotes,function(Q)
+      qr=Q[1]==char and Q or nil return qr end) then
+      start = i
+    elseif not qr and string.find(char, "%s") then
+      if #token > 0 then
+        table.insert(tokens, token)
+      end
+      token = {}
+    else -- normal char
+      append(token, char, qr)
+    end
+  end
+  if qr then
+    return nil, "unclosed quote at index " .. start
+  end
+
+  if #token > 0 then
+    table.insert(tokens, token)
+  end
+
+  return tokens
+end
+
+--require("package").delay(text, "/lib/core/full_text.lua")
+
+-------------------------------- keyboard
+
+-------------------------------- filesystem
+
+local filesystem = {}
+local mtab = {name="", children={}, links={}}
+local fstab = {}
+
+local function segments(path)
+  local parts = {}
+  for part in path:gmatch("[^\\/]+") do
+    local current, up = part:find("^%.?%.$")
+    if current then
+      if up == 2 then
+        table.remove(parts)
+      end
+    else
+      table.insert(parts, part)
+    end
+  end
+  return parts
+end
+
+local function findNode(path, create, resolve_links)
+  checkArg(1, path, "string")
+  local visited = {}
+  local parts = segments(path)
+  local ancestry = {}
+  local node = mtab
+  local index = 1
+  while index <= #parts do
+    local part = parts[index]
+    ancestry[index] = node
+    if not node.children[part] then
+      local link_path = node.links[part]
+      if link_path then
+        if not resolve_links and #parts == index then break end
+
+        if visited[path] then
+          return nil, string.format("link cycle detected '%s'", path)
+        end
+        -- the previous parts need to be conserved in case of future ../.. link cuts
+        visited[path] = index
+        local pst_path = "/" .. table.concat(parts, "/", index + 1)
+        local pre_path
+
+        if link_path:match("^[^/]") then
+          pre_path = table.concat(parts, "/", 1, index - 1) .. "/"
+          local link_parts = segments(link_path)
+          local join_parts = segments(pre_path .. link_path)
+          local back = (index - 1 + #link_parts) - #join_parts
+          index = index - back
+          node = ancestry[index]
+        else
+          pre_path = ""
+          index = 1
+          node = mtab
+        end
+
+        path = pre_path .. link_path .. pst_path
+        parts = segments(path)
+        part = nil -- skip node movement
+      elseif create then
+        node.children[part] = {name=part, parent=node, children={}, links={}}
+      else
+        break
+      end
+    end
+    if part then
+      node = node.children[part]
+      index = index + 1
+    end
+  end
+
+  local vnode, vrest = node, #parts >= index and table.concat(parts, "/", index)
+  local rest = vrest
+  while node and not node.fs do
+    rest = rest and filesystem.concat(node.name, rest) or node.name
+    node = node.parent
+  end
+  return node, rest, vnode, vrest
+end
+
+function filesystem.canonical(path)
+  local result = table.concat(segments(path), "/")
+  if unicode.sub(path, 1, 1) == "/" then
+    return "/" .. result
+  else
+    return result
+  end
+end
+
+function filesystem.concat(...)
+  local set = table.pack(...)
+  for index, value in ipairs(set) do
+    checkArg(index, value, "string")
+  end
+  return filesystem.canonical(table.concat(set, "/"))
+end
+
+function filesystem.get(path)
+  local node = findNode(path)
+  if node.fs then
+    local proxy = node.fs
+    path = ""
+    while node and node.parent do
+      path = filesystem.concat(node.name, path)
+      node = node.parent
+    end
+    path = filesystem.canonical(path)
+    if path ~= "/" then
+      path = "/" .. path
+    end
+    return proxy, path
+  end
+  return nil, "no such file system"
+end
+
+function filesystem.realPath(path)
+  checkArg(1, path, "string")
+  local node, rest = findNode(path, false, true)
+  if not node then return nil, rest end
+  local parts = {rest or nil}
+  repeat
+    table.insert(parts, 1, node.name)
+    node = node.parent
+  until not node
+  return table.concat(parts, "/")
+end
+
+function filesystem.mount(fs, path)
+  checkArg(1, fs, "string", "table")
+  if type(fs) == "string" then
+    fs = filesystem.proxy(fs)
+  end
+  assert(type(fs) == "table", "bad argument #1 (file system proxy or address expected)")
+  checkArg(2, path, "string")
+
+  local real
+  if not mtab.fs then
+    if path == "/" then
+      real = path
+    else
+      return nil, "rootfs must be mounted first"
+    end
+  else
+    local why
+    real, why = filesystem.realPath(path)
+    if not real then
+      return nil, why
+    end
+
+    if filesystem.exists(real) and not filesystem.isDirectory(real) then
+      return nil, "mount point is not a directory"
+    end
+  end
+
+  local fsnode
+  if fstab[real] then
+    return nil, "another filesystem is already mounted here"
+  end
+  for _,node in pairs(fstab) do
+    if node.fs.address == fs.address then
+      fsnode = node
+      break
+    end
+  end
+
+  if not fsnode then
+    fsnode = select(3, findNode(real, true))
+    -- allow filesystems to intercept their own nodes
+    fs.fsnode = fsnode
+  else
+    local pwd = filesystem.path(real)
+    local parent = select(3, findNode(pwd, true))
+    local name = filesystem.name(real)
+    fsnode = setmetatable({name=name,parent=parent},{__index=fsnode})
+    parent.children[name] = fsnode
+  end
+
+  fsnode.fs = fs
+  fstab[real] = fsnode
+
+  return true
+end
+
+function filesystem.path(path)
+  local parts = segments(path)
+  local result = table.concat(parts, "/", 1, #parts - 1) .. "/"
+  if unicode.sub(path, 1, 1) == "/" and unicode.sub(result, 1, 1) ~= "/" then
+    return "/" .. result
+  else
+    return result
+  end
+end
+
+function filesystem.name(path)
+  checkArg(1, path, "string")
+  local parts = segments(path)
+  return parts[#parts]
+end
+
+function filesystem.proxy(filter, options)
+  checkArg(1, filter, "string")
+  if not component.list("filesystem")[filter] or next(options or {}) then
+    -- if not, load fs full library, it has a smarter proxy that also supports options
+    return filesystem.internal.proxy(filter, options)
+  end
+  return component.proxy(filter) -- it might be a perfect match
+end
+
+function filesystem.exists(path)
+  if not filesystem.realPath(filesystem.path(path)) then
+    return false
+  end
+  local node, rest, vnode, vrest = findNode(path)
+  if not vrest or vnode.links[vrest] then -- virtual directory or symbolic link
+    return true
+  elseif node and node.fs then
+    return node.fs.exists(rest)
+  end
+  return false
+end
+
+function filesystem.isDirectory(path)
+  local real, reason = filesystem.realPath(path)
+  if not real then return nil, reason end
+  local node, rest, vnode, vrest = findNode(real)
+  if not vnode.fs and not vrest then
+    return true -- virtual directory (mount point)
+  end
+  if node.fs then
+    return not rest or node.fs.isDirectory(rest)
+  end
+  return false
+end
+
+function filesystem.list(path)
+  local node, rest, vnode, vrest = findNode(path, false, true)
+  local result = {}
+  if node then
+    result = node.fs and node.fs.list(rest or "") or {}
+    -- `if not vrest` indicates that vnode reached the end of path
+    -- in other words, vnode[children, links] represent path
+    if not vrest then
+      for k,n in pairs(vnode.children) do
+        if not n.fs or fstab[filesystem.concat(path, k)] then
+          table.insert(result, k .. "/")
+        end
+      end
+      for k in pairs(vnode.links) do
+        table.insert(result, k)
+      end
+    end
+  end
+  local set = {}
+  for _,name in ipairs(result) do
+    set[filesystem.canonical(name)] = name
+  end
+  return function()
+    local key, value = next(set)
+    set[key or false] = nil
+    return value
+  end
+end
+
+function filesystem.open(path, mode)
+  checkArg(1, path, "string")
+  mode = tostring(mode or "r")
+  checkArg(2, mode, "string")
+
+  assert(({r=true, rb=true, w=true, wb=true, a=true, ab=true})[mode],
+    "bad argument #2 (r[b], w[b] or a[b] expected, got " .. mode .. ")")
+
+  local node, rest = findNode(path, false, true)
+  if not node then
+    return nil, rest
+  end
+  if not node.fs or not rest or (({r=true,rb=true})[mode] and not node.fs.exists(rest)) then
+    return nil, "file not found"
+  end
+
+  local handle, reason = node.fs.open(rest, mode)
+  if not handle then
+    return nil, reason
+  end
+
+  return setmetatable({
+    fs = node.fs,
+    handle = handle,
+  }, {__index = function(tbl, key)
+    if not tbl.fs[key] then return end
+    if not tbl.handle then
+      return nil, "file is closed"
+    end
+    return function(self, ...)
+      local h = self.handle
+      if key == "close" then
+        self.handle = nil
+      end
+      return self.fs[key](h, ...)
+    end
+  end})
+end
+
+filesystem.findNode = findNode
+filesystem.segments = segments
+filesystem.fstab = fstab
+
+-------------------------------- shell
+
+local shell = {}
+
+function shell.resolve(path, ext)
+  checkArg(1, path, "string")
+
+  local dir = path
+  if dir:find("/") ~= 1 then
+    dir = fs.concat(shell.getWorkingDirectory(), dir)
+  end
+  local name = fs.name(path)
+  dir = fs[name and "path" or "canonical"](dir)
+  local fullname = fs.concat(dir, name or "")
+
+  if not ext then
+    return fullname
+  elseif name then
+    checkArg(2, ext, "string")
+    -- search for name in PATH if no dir was given
+    -- no dir was given if path has no /
+    local search_in = path:find("/") and dir or os.getenv("PATH")
+    for search_path in string.gmatch(search_in, "[^:]+") do
+      -- resolve search_path because they may be relative
+      local search_name = fs.concat(shell.resolve(search_path), name)
+      if not fs.exists(search_name) then
+        search_name = search_name .. "." .. ext
+      end
+      -- extensions are provided when the caller is looking for a file
+      if fs.exists(search_name) and not fs.isDirectory(search_name) then
+        return search_name
+      end
+    end
+  end
+
+  return nil, "file not found"
+end
+
+function shell.parse(...)
+  local params = table.pack(...)
+  local args = {}
+  local options = {}
+  local doneWithOptions = false
+  for i = 1, params.n do
+    local param = params[i]
+    if not doneWithOptions and type(param) == "string" then
+      if param == "--" then
+        doneWithOptions = true -- stop processing options at `--`
+      elseif param:sub(1, 2) == "--" then
+        local key, value = param:match("%-%-(.-)=(.*)")
+        if not key then
+          key, value = param:sub(3), true
+        end
+        options[key] = value
+      elseif param:sub(1, 1) == "-" and param ~= "-" then
+        for j = 2, unicode.len(param) do
+          options[unicode.sub(param, j, j)] = true
+        end
+      else
+        table.insert(args, param)
+      end
+    else
+      table.insert(args, param)
+    end
+  end
+  return args, options
+end
 
 -------------------------------- edit
 
-local fs = require("filesystem")
-local keyboard = require("keyboard")
-local shell = require("shell")
-local term = require("term") -- TODO use tty and cursor position instead of global area and gpu
-local text = require("text")
-local unicode = require("unicode")
+--local keyboard = localRequire("keyboard")
+--local shell = localRequire("shell")
+--local term = localRequire("term") -- TODO use tty and cursor position instead of global area and gpu
+--local text = localRequire("text")
 
 if not term.isAvailable() then
   return
@@ -76,11 +725,10 @@ local function loadConfig()
     fs.makeDirectory(config_dir_path)
     local f = io.open(config_path, "w")
     if f then
-    local serialization = require("serialization")
-    for k, v in pairs(env) do
-        f:write(k.."="..tostring(serialization.serialize(v, math.huge)).."\n")
-    end
-    f:close()
+      for k, v in pairs(env) do
+          f:write(k.."="..tostring(serialization.serialize(v, math.huge)).."\n")
+      end
+      f:close()
     end
   end
   return env
