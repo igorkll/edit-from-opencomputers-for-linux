@@ -532,6 +532,27 @@ local function rawKeyboardPull()
 
   local charbyte = string.byte(char)
 
+  if charbyte == 27 then
+    local seq = char
+    local next_byte = read_byte()
+    if next_byte then
+        seq = seq .. next_byte
+        while true do
+            local b = read_byte()
+            if not b then break end
+            seq = seq .. b
+            local last = b:byte()
+            if (last >= 0x40 and last <= 0x7E) or last == 0x7E then
+                break
+            end
+        end
+    end
+    os.execute("reset")
+    print(#seq, seq:byte(1), seq:byte(2), seq:byte(3), seq:sub(1, 1), seq:sub(2, 2), seq:sub(3, 3))
+    os.exit(1)
+    return
+end
+
   if charbyte == 10 then
     return {"key_down", "keyboard", 13, 28}
   elseif charbyte == 127 then
